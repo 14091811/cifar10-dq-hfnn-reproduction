@@ -1,0 +1,20 @@
+{
+  "run_name": "cifar10_dqhfnn_haar_high_strong_ent",
+  "seed": 42,
+  "epochs": 100,
+  "batch_size": 128,
+  "num_workers": 4,
+  "learning_rate": 0.1,
+  "weight_decay": 0.012,
+  "max_grad_norm": 5.0,
+  "momentum": 0.9,
+  "milestones": [56, 78],
+  "gamma": 0.1,
+  "validation_ratio": 0.1,
+  "hidden_dim": 256,
+  "num_classes": 10,
+  "total_pairs": 153,
+  "random_pair_ratio": 0.3,
+  "circuit_variant": "strong_ent",
+  "pair_source": "haar_high"
+}

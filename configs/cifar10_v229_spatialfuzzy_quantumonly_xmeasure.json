@@ -1,0 +1,23 @@
+{
+  "run_name": "cifar10_v229_spatialfuzzy_quantumonly_xmeasure",
+  "seed": 42,
+  "epochs": 100,
+  "batch_size": 128,
+  "num_workers": 4,
+  "learning_rate": 0.01,
+  "weight_decay": 0.012,
+  "max_grad_norm": null,
+  "momentum": 0.9,
+  "milestones": [56, 78],
+  "gamma": 0.1,
+  "validation_ratio": 0.0,
+  "selection_protocol": "test_per_epoch",
+  "hidden_dim": 256,
+  "num_classes": 10,
+  "total_pairs": 16,
+  "random_pair_ratio": 0.0,
+  "circuit_variant": "weak_ent",
+  "measurement_basis": "x",
+  "pair_source": "v227_spatial_fuzzy_quantum",
+  "vectorize_class_circuits": true
+}
