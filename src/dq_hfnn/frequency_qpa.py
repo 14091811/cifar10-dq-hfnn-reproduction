@@ -216,3 +216,86 @@ class FrequencyQPAResidual(nn.Module):
         lh, hl, hh = self.detail_refinement(lh, hl, hh)
         reconstruction = haar_idwt2(ll, lh, hl, hh)
         return x + self.alpha * self.expand(reconstruction)
+
+
+class WideTwoLevelFrequencyQPAAttention(nn.Module):
+    """Use narrow frequency-conditioned Q/K scores to aggregate wide value tokens."""
+
+    def __init__(self, channels=128, qk_channels=8, heads=2, mode="torchquantum", entangled=True):
+        super().__init__()
+        if qk_channels % heads or channels % heads:
+            raise ValueError("Q/K and value channels must divide evenly across attention heads")
+        if mode not in {"none", "classical", "torchquantum"}:
+            raise ValueError(f"Unsupported wide FrequencyQPA mode: {mode}")
+        self.channels = channels
+        self.qk_channels = qk_channels
+        self.heads = heads
+        self.mode = mode
+        self.q_projection = nn.Conv2d(channels, qk_channels, 1, bias=False)
+        self.k_projection = nn.Conv2d(channels, qk_channels, 1, bias=False)
+        self.v_projection = nn.Conv2d(channels, channels, 1, bias=False)
+        self.frequency_q = nn.Conv2d(channels * 3, qk_channels, 1, bias=False)
+        self.frequency_k = nn.Conv2d(channels * 3, qk_channels, 1, bias=False)
+        self.frequency_scale = nn.Parameter(torch.zeros(()))
+        self.output_projection = nn.Conv2d(channels, channels, 1, bias=False)
+        self.scorer = (
+            ClassicalQPAScorer() if mode == "classical" else
+            TorchQuantumQPAScorer(entangled=entangled) if mode == "torchquantum" else
+            None
+        )
+        for layer in (
+            self.q_projection, self.k_projection, self.v_projection,
+            self.frequency_q, self.frequency_k,
+        ):
+            nn.init.kaiming_uniform_(layer.weight, a=math.sqrt(5))
+        # Identity start without an outer residual branch.  Once this projection opens,
+        # gradients reach the Q/K, V, frequency, and scorer paths on the next update.
+        nn.init.zeros_(self.output_projection.weight)
+
+    def forward(self, ll, high):
+        if self.mode == "none":
+            return ll
+        batch, _, height, width = ll.shape
+        if (height, width) != (4, 4):
+            raise ValueError("Wide two-level FrequencyQPA expects a 4x4 LL2 feature map")
+        q = self.q_projection(ll) + self.frequency_scale * self.frequency_q(high)
+        k = self.k_projection(ll) + self.frequency_scale * self.frequency_k(high)
+        v = self.v_projection(ll)
+        qk_dimension = self.qk_channels // self.heads
+        value_dimension = self.channels // self.heads
+        q = q.reshape(batch, self.heads, qk_dimension, 16).transpose(2, 3)
+        k = k.reshape(batch, self.heads, qk_dimension, 16).transpose(2, 3)
+        v = v.reshape(batch, self.heads, value_dimension, 16).transpose(2, 3)
+        pair_scores = self.scorer(q.unsqueeze(3), k.unsqueeze(2)).mean(dim=-1)
+        weights = pair_scores.softmax(dim=-1)
+        context = weights @ v
+        context = context.transpose(2, 3).reshape(batch, self.channels, height, width)
+        return ll + self.output_projection(context)
+
+
+class WideTwoLevelFrequencyQPALayer(nn.Module):
+    """Full-width two-level Haar reconstruction with narrow quantum Q/K and wide V."""
+
+    def __init__(self, channels=128, qk_channels=8, mode="torchquantum", entangled=True):
+        super().__init__()
+        self.channels = channels
+        self.mode = mode
+        self.attention = WideTwoLevelFrequencyQPAAttention(
+            channels=channels,
+            qk_channels=qk_channels,
+            mode=mode,
+            entangled=entangled,
+        )
+        self.detail_refinement_1 = DirectionalHighBandRefinement(channels)
+        self.detail_refinement_2 = DirectionalHighBandRefinement(channels)
+
+    def forward(self, x):
+        if self.mode == "none":
+            return x
+        ll1, lh1, hl1, hh1 = haar_dwt2(x)
+        ll2, lh2, hl2, hh2 = haar_dwt2(ll1)
+        ll2 = self.attention(ll2, torch.cat((lh2, hl2, hh2), dim=1))
+        lh2, hl2, hh2 = self.detail_refinement_2(lh2, hl2, hh2)
+        ll1 = haar_idwt2(ll2, lh2, hl2, hh2)
+        lh1, hl1, hh1 = self.detail_refinement_1(lh1, hl1, hh1)
+        return haar_idwt2(ll1, lh1, hl1, hh1)

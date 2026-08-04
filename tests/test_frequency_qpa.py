@@ -5,10 +5,11 @@ import torch
 
 from dq_hfnn.frequency_qpa import (
     FrequencyQPAResidual,
+    WideTwoLevelFrequencyQPALayer,
     haar_dwt2,
     haar_idwt2,
 )
-from dq_hfnn.frequency_qpa_model import FrequencyQPANet
+from dq_hfnn.frequency_qpa_model import FrequencyQPANet, WideTwoLevelFrequencyQPANet
 
 
 def test_haar_round_trip():
@@ -35,6 +36,24 @@ def test_disabled_frequency_qpa_is_exact_identity():
 
 def test_frequency_qpa_network_output_shape():
     model = FrequencyQPANet(mode="classical")
+    logits = model(torch.randn(2, 3, 32, 32))
+    assert logits.shape == (2, 10)
+    assert torch.isfinite(logits).all()
+
+
+def test_wide_two_level_frequency_qpa_is_identity_at_initialization():
+    layer = WideTwoLevelFrequencyQPALayer(mode="classical")
+    features = torch.randn(2, 128, 16, 16, requires_grad=True)
+    output = layer(features)
+    assert output.shape == features.shape
+    assert torch.allclose(output, features, atol=1e-6)
+    output.square().mean().backward()
+    assert layer.attention.output_projection.weight.grad is not None
+    assert torch.isfinite(layer.attention.output_projection.weight.grad).all()
+
+
+def test_wide_two_level_frequency_qpa_network_output_shape():
+    model = WideTwoLevelFrequencyQPANet(mode="classical")
     logits = model(torch.randn(2, 3, 32, 32))
     assert logits.shape == (2, 10)
     assert torch.isfinite(logits).all()
