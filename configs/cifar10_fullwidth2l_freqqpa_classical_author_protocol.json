@@ -1,5 +1,5 @@
 {
-  "run_name": "cifar10_fullwidth2l_freqqpa_classical_author_protocol",
+  "run_name": "cifar10_fullwidth2l_freqqpa_classical_residual_author_protocol",
   "model_type": "fullwidth_twolevel_frequency_qpa",
   "frequency_qpa_mode": "classical",
   "frequency_qpa_entangled": false,

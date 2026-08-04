@@ -354,10 +354,15 @@ class FullWidthTwoLevelFrequencyQPAAttention(nn.Module):
 
 
 class FullWidthTwoLevelFrequencyQPALayer(nn.Module):
-    """V267-style full-width DWT with compact LL2 frequency-conditioned QPA."""
+    """DWA-style residual wrapper around full-width DWT and compact LL2 QPA."""
 
-    def __init__(self, channels=128, reduced_channels=8, mode="torchquantum", entangled=True):
+    def __init__(
+        self, channels=128, reduced_channels=8, mode="torchquantum", entangled=True,
+        alpha_max=0.10, alpha_init=0.02,
+    ):
         super().__init__()
+        if not 0.0 < alpha_init < alpha_max:
+            raise ValueError("alpha_init must be between zero and alpha_max")
         self.channels = channels
         self.mode = mode
         self.reduce_ll2 = nn.Conv2d(channels, reduced_channels, 1, bias=False)
@@ -366,6 +371,12 @@ class FullWidthTwoLevelFrequencyQPALayer(nn.Module):
             reduced_channels, mode=mode, entangled=entangled
         )
         self.expand_delta = nn.Conv2d(reduced_channels, channels, 1, bias=False)
+        self.alpha_max = alpha_max
+        self.alpha_logit = nn.Parameter(torch.logit(torch.tensor(alpha_init / alpha_max)))
+
+    @property
+    def alpha(self):
+        return self.alpha_max * self.alpha_logit.sigmoid()
 
     def forward(self, x):
         if self.mode == "none":
@@ -377,4 +388,5 @@ class FullWidthTwoLevelFrequencyQPALayer(nn.Module):
         updated_compact_ll2 = self.attention(compact_ll2, frequency_context)
         ll2 = ll2 + self.expand_delta(updated_compact_ll2 - compact_ll2)
         ll1 = haar_idwt2(ll2, lh2, hl2, hh2)
-        return haar_idwt2(ll1, lh1, hl1, hh1)
+        candidate = haar_idwt2(ll1, lh1, hl1, hh1)
+        return x + self.alpha * (candidate - x)

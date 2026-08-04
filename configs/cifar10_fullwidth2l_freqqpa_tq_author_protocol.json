@@ -1,5 +1,5 @@
 {
-  "run_name": "cifar10_fullwidth2l_freqqpa_tq_author_protocol",
+  "run_name": "cifar10_fullwidth2l_freqqpa_tq_residual_author_protocol",
   "model_type": "fullwidth_twolevel_frequency_qpa",
   "frequency_qpa_mode": "torchquantum",
   "frequency_qpa_entangled": true,

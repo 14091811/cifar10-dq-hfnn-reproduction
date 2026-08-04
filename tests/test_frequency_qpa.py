@@ -52,6 +52,7 @@ def test_wide_two_level_frequency_qpa_is_identity_at_initialization():
     output = layer(features)
     assert output.shape == features.shape
     assert torch.allclose(output, features, atol=1e-6)
+    assert 0.0 < layer.alpha.item() < layer.alpha_max
     output.square().mean().backward()
     assert layer.attention.output_projection.weight.grad is not None
     assert torch.isfinite(layer.attention.output_projection.weight.grad).all()
