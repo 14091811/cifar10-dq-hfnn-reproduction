@@ -16,7 +16,11 @@ from torchvision import datasets, transforms
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT / "src"))
 from dq_hfnn.model import DQHFNN
-from dq_hfnn.frequency_qpa_model import FrequencyQPANet, WideTwoLevelFrequencyQPANet
+from dq_hfnn.frequency_qpa_model import (
+    FrequencyQPANet,
+    FullWidthTwoLevelFrequencyQPANet,
+    WideTwoLevelFrequencyQPANet,
+)
 from dq_hfnn.run_io import create_run_directory, write_json
 
 
@@ -161,10 +165,14 @@ def main():
     )
     val_loader = DataLoader(val, shuffle=False, **loader_kwargs)
     test_loader = DataLoader(test, shuffle=False, **loader_kwargs)
-    if cfg.get("model_type", "dq_hfnn") in {"frequency_qpa", "wide_twolevel_frequency_qpa"}:
+    if cfg.get("model_type", "dq_hfnn") in {
+        "frequency_qpa", "wide_twolevel_frequency_qpa", "fullwidth_twolevel_frequency_qpa"
+    }:
         model_class = (
             WideTwoLevelFrequencyQPANet
             if cfg["model_type"] == "wide_twolevel_frequency_qpa"
+            else FullWidthTwoLevelFrequencyQPANet
+            if cfg["model_type"] == "fullwidth_twolevel_frequency_qpa"
             else FrequencyQPANet
         )
         model = model_class(

@@ -299,3 +299,82 @@ class WideTwoLevelFrequencyQPALayer(nn.Module):
         ll1 = haar_idwt2(ll2, lh2, hl2, hh2)
         lh1, hl1, hh1 = self.detail_refinement_1(lh1, hl1, hh1)
         return haar_idwt2(ll1, lh1, hl1, hh1)
+
+
+class FullWidthTwoLevelFrequencyQPAAttention(nn.Module):
+    """Compact LL2 QPA with directional full-width detail conditioning."""
+
+    def __init__(self, channels=8, heads=2, mode="torchquantum", entangled=True):
+        super().__init__()
+        if channels % heads:
+            raise ValueError("channels must divide evenly across attention heads")
+        if mode not in {"none", "classical", "torchquantum"}:
+            raise ValueError(f"Unsupported full-width FrequencyQPA mode: {mode}")
+        self.channels = channels
+        self.heads = heads
+        self.mode = mode
+        self.q_projection = nn.Conv2d(channels, channels, 1, bias=False)
+        self.k_projection = nn.Conv2d(channels, channels, 1, bias=False)
+        self.v_projection = nn.Conv2d(channels, channels, 1, bias=False)
+        self.frequency_q = nn.Conv2d(channels * 3, channels, 1, bias=False)
+        self.frequency_k = nn.Conv2d(channels * 3, channels, 1, bias=False)
+        self.frequency_scale = nn.Parameter(torch.zeros(()))
+        self.output_projection = nn.Conv2d(channels, channels, 1, bias=False)
+        self.scorer = (
+            ClassicalQPAScorer() if mode == "classical" else
+            TorchQuantumQPAScorer(entangled=entangled) if mode == "torchquantum" else
+            None
+        )
+        for layer in (
+            self.q_projection, self.k_projection, self.v_projection,
+            self.frequency_q, self.frequency_k,
+        ):
+            nn.init.kaiming_uniform_(layer.weight, a=math.sqrt(5))
+        # The full-width reconstruction starts exactly as identity.
+        nn.init.zeros_(self.output_projection.weight)
+
+    def forward(self, ll, high):
+        if self.mode == "none":
+            return ll
+        batch, _, height, width = ll.shape
+        if (height, width) != (4, 4):
+            raise ValueError("Full-width two-level FrequencyQPA expects a 4x4 LL2 feature map")
+        q = self.q_projection(ll) + self.frequency_scale * self.frequency_q(high)
+        k = self.k_projection(ll) + self.frequency_scale * self.frequency_k(high)
+        v = self.v_projection(ll)
+        dimension = self.channels // self.heads
+        q = q.reshape(batch, self.heads, dimension, 16).transpose(2, 3)
+        k = k.reshape(batch, self.heads, dimension, 16).transpose(2, 3)
+        v = v.reshape(batch, self.heads, dimension, 16).transpose(2, 3)
+        pair_scores = self.scorer(q.unsqueeze(3), k.unsqueeze(2)).mean(dim=-1)
+        weights = pair_scores.softmax(dim=-1)
+        context = weights @ v
+        context = context.transpose(2, 3).reshape(batch, self.channels, height, width)
+        return ll + self.output_projection(context)
+
+
+class FullWidthTwoLevelFrequencyQPALayer(nn.Module):
+    """V267-style full-width DWT with compact LL2 frequency-conditioned QPA."""
+
+    def __init__(self, channels=128, reduced_channels=8, mode="torchquantum", entangled=True):
+        super().__init__()
+        self.channels = channels
+        self.mode = mode
+        self.reduce_ll2 = nn.Conv2d(channels, reduced_channels, 1, bias=False)
+        self.reduce_frequency = nn.Conv2d(channels * 3, reduced_channels * 3, 1, bias=False)
+        self.attention = FullWidthTwoLevelFrequencyQPAAttention(
+            reduced_channels, mode=mode, entangled=entangled
+        )
+        self.expand_delta = nn.Conv2d(reduced_channels, channels, 1, bias=False)
+
+    def forward(self, x):
+        if self.mode == "none":
+            return x
+        ll1, lh1, hl1, hh1 = haar_dwt2(x)
+        ll2, lh2, hl2, hh2 = haar_dwt2(ll1)
+        compact_ll2 = self.reduce_ll2(ll2)
+        frequency_context = self.reduce_frequency(torch.cat((lh2, hl2, hh2), dim=1))
+        updated_compact_ll2 = self.attention(compact_ll2, frequency_context)
+        ll2 = ll2 + self.expand_delta(updated_compact_ll2 - compact_ll2)
+        ll1 = haar_idwt2(ll2, lh2, hl2, hh2)
+        return haar_idwt2(ll1, lh1, hl1, hh1)
