@@ -289,7 +289,10 @@ def main():
     test_metrics = evaluate(model, test_loader, device, cfg["num_classes"], loss_fn)
     selection_name = "best_test_accuracy" if cfg.get("selection_protocol") == "test_per_epoch" else "best_validation_accuracy"
     result = {"best_epoch": checkpoint["epoch"], selection_name: best, **{f"test_{key}": value for key, value in test_metrics.items()}}
-    if model.feature_quantum_adapter or model.class_logit_residual:
+    if (
+        getattr(model, "feature_quantum_adapter", False)
+        or getattr(model, "class_logit_residual", False)
+    ):
         result["fusion_alpha"] = model.fusion_alpha.item()
         result["quantum_auxiliary_weight"] = model.quantum_auxiliary_weight
         result["quantum_auxiliary_objective"] = cfg.get(
