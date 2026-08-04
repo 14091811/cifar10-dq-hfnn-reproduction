@@ -1,2 +1,3 @@
 torch>=2.0
 torchvision>=0.15
+torchquantum==0.1.8

@@ -1,5 +1,6 @@
 import argparse
 import json
+import os
 import random
 import sys
 import time
@@ -15,6 +16,7 @@ from torchvision import datasets, transforms
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT / "src"))
 from dq_hfnn.model import DQHFNN
+from dq_hfnn.frequency_qpa_model import FrequencyQPANet
 from dq_hfnn.run_io import create_run_directory, write_json
 
 
@@ -25,6 +27,26 @@ def residual_direction_loss(quantum_logits, classical_logits, labels):
     ) - classical_logits.detach().softmax(dim=1)
     centered_quantum = quantum_logits - quantum_logits.mean(dim=1, keepdim=True)
     return (1.0 - F.cosine_similarity(centered_quantum, target, dim=1)).mean()
+
+
+def seed_worker(worker_id):
+    """Seed Python and NumPy from the DataLoader's deterministic torch seed."""
+    worker_seed = torch.initial_seed() % 2**32
+    random.seed(worker_seed)
+    np.random.seed(worker_seed)
+
+
+def configure_reproducibility(seed, enabled):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+    if enabled:
+        os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
+        torch.backends.cudnn.benchmark = False
+        torch.backends.cudnn.deterministic = True
+        torch.use_deterministic_algorithms(True)
 
 
 class TeeStream:
@@ -89,7 +111,7 @@ def evaluate(model, loader, device, num_classes, loss_fn):
 def main():
     parser = argparse.ArgumentParser(); parser.add_argument("--config", type=Path, required=True); args = parser.parse_args()
     cfg = json.loads(args.config.read_text())
-    random.seed(cfg["seed"]); np.random.seed(cfg["seed"]); torch.manual_seed(cfg["seed"])
+    configure_reproducibility(cfg["seed"], cfg.get("deterministic", False))
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     run_dir, experiment_name, started_at = create_run_directory(
         ROOT, cfg["run_name"], cfg["seed"]
@@ -124,15 +146,36 @@ def main():
         indices = torch.randperm(len(source), generator=torch.Generator().manual_seed(cfg["seed"])).tolist()
         split = round(len(indices) * cfg["validation_ratio"])
         train, val = Subset(source, indices[split:]), Subset(val_source, indices[:split])
-    kwargs = dict(batch_size=cfg["batch_size"], num_workers=cfg["num_workers"], pin_memory=device.type == "cuda")
-    train_loader, val_loader, test_loader = DataLoader(train, shuffle=True, **kwargs), DataLoader(val, **kwargs), DataLoader(test, **kwargs)
-    model = DQHFNN(cfg["num_classes"], cfg["hidden_dim"], cfg["total_pairs"], cfg["random_pair_ratio"], cfg["circuit_variant"], cfg["seed"], cfg.get("pair_source", "pixels"), cfg.get("pairing_layout", "compact"), cfg.get("evaluation_pairing", "fixed"), cfg.get("vectorize_class_circuits", False), cfg.get("quantum_enabled", True), cfg.get("local_tap_index", 6), cfg.get("local_grid_size", 4), cfg.get("frequency_tap_index", 3), cfg.get("frequency_num_groups", 4), cfg.get("frequency_alpha_max", 0.5), cfg.get("frequency_alpha_init", 0.1), cfg.get("measurement_basis", "z"), cfg.get("quantum_auxiliary_weight", 0.0), cfg.get("fusion_alpha_max", 0.5), cfg.get("fusion_alpha_init", 0.1), cfg.get("channel_attention", "none"), cfg.get("fca_num_groups", 16), cfg.get("fca_num_circuits", 4), cfg.get("author_dq_branch_enabled", True), cfg.get("first_pool", "maxpool"), cfg.get("frequency_beta")).to(device)
+    loader_kwargs = dict(
+        batch_size=cfg["batch_size"],
+        num_workers=cfg["num_workers"],
+        pin_memory=device.type == "cuda",
+    )
+    train_generator = torch.Generator().manual_seed(cfg["seed"] + 10_000)
+    train_loader = DataLoader(
+        train,
+        shuffle=True,
+        generator=train_generator,
+        worker_init_fn=seed_worker,
+        **loader_kwargs,
+    )
+    val_loader = DataLoader(val, shuffle=False, **loader_kwargs)
+    test_loader = DataLoader(test, shuffle=False, **loader_kwargs)
+    if cfg.get("model_type", "dq_hfnn") == "frequency_qpa":
+        model = FrequencyQPANet(
+            num_classes=cfg["num_classes"],
+            hidden_dim=cfg["hidden_dim"],
+            mode=cfg.get("frequency_qpa_mode", "torchquantum"),
+            entangled=cfg.get("frequency_qpa_entangled", True),
+        ).to(device)
+    else:
+        model = DQHFNN(cfg["num_classes"], cfg["hidden_dim"], cfg["total_pairs"], cfg["random_pair_ratio"], cfg["circuit_variant"], cfg["seed"], cfg.get("pair_source", "pixels"), cfg.get("pairing_layout", "compact"), cfg.get("evaluation_pairing", "fixed"), cfg.get("vectorize_class_circuits", False), cfg.get("quantum_enabled", True), cfg.get("local_tap_index", 6), cfg.get("local_grid_size", 4), cfg.get("frequency_tap_index", 3), cfg.get("frequency_num_groups", 4), cfg.get("frequency_alpha_max", 0.5), cfg.get("frequency_alpha_init", 0.1), cfg.get("measurement_basis", "z"), cfg.get("quantum_auxiliary_weight", 0.0), cfg.get("fusion_alpha_max", 0.5), cfg.get("fusion_alpha_init", 0.1), cfg.get("channel_attention", "none"), cfg.get("fca_num_groups", 16), cfg.get("fca_num_circuits", 4), cfg.get("author_dq_branch_enabled", True), cfg.get("first_pool", "maxpool"), cfg.get("frequency_beta")).to(device)
     quantum_module = (
-        model.local_frequency_head
-        if model.local_frequency_head is not None
-        else model.quantum_logit_head
-        if model.quantum_logit_head is not None
-        else model.trunk_frequency_modulator
+        getattr(model, "local_frequency_head", None)
+        if getattr(model, "local_frequency_head", None) is not None
+        else getattr(model, "quantum_logit_head", None)
+        if getattr(model, "quantum_logit_head", None) is not None
+        else getattr(model, "trunk_frequency_modulator", None)
     )
     if quantum_module is not None and "quantum_weight_decay" in cfg:
         quantum_parameters = list(quantum_module.parameters())
