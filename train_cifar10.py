@@ -21,6 +21,12 @@ from dq_hfnn.frequency_qpa_model import (
     FullWidthTwoLevelFrequencyQPANet,
     WideTwoLevelFrequencyQPANet,
 )
+from dq_hfnn.local_spa import (
+    ClassicalCNN,
+    DWTClassicalSPACNN,
+    DWTQPASPACNN,
+    YangSPACNN,
+)
 from dq_hfnn.run_io import create_run_directory, write_json
 
 
@@ -180,6 +186,22 @@ def main():
             hidden_dim=cfg["hidden_dim"],
             mode=cfg.get("frequency_qpa_mode", "torchquantum"),
             entangled=cfg.get("frequency_qpa_entangled", True),
+        ).to(device)
+    elif cfg.get("model_type") in {
+        "classical_cnn",
+        "yang_spa_cnn",
+        "dwt_classical_spa_cnn",
+        "dwt_qpa_spa_cnn",
+    }:
+        local_models = {
+            "classical_cnn": ClassicalCNN,
+            "yang_spa_cnn": YangSPACNN,
+            "dwt_classical_spa_cnn": DWTClassicalSPACNN,
+            "dwt_qpa_spa_cnn": DWTQPASPACNN,
+        }
+        model = local_models[cfg["model_type"]](
+            num_classes=cfg["num_classes"],
+            hidden_dim=cfg["hidden_dim"],
         ).to(device)
     else:
         model = DQHFNN(cfg["num_classes"], cfg["hidden_dim"], cfg["total_pairs"], cfg["random_pair_ratio"], cfg["circuit_variant"], cfg["seed"], cfg.get("pair_source", "pixels"), cfg.get("pairing_layout", "compact"), cfg.get("evaluation_pairing", "fixed"), cfg.get("vectorize_class_circuits", False), cfg.get("quantum_enabled", True), cfg.get("local_tap_index", 6), cfg.get("local_grid_size", 4), cfg.get("frequency_tap_index", 3), cfg.get("frequency_num_groups", 4), cfg.get("frequency_alpha_max", 0.5), cfg.get("frequency_alpha_init", 0.1), cfg.get("measurement_basis", "z"), cfg.get("quantum_auxiliary_weight", 0.0), cfg.get("fusion_alpha_max", 0.5), cfg.get("fusion_alpha_init", 0.1), cfg.get("channel_attention", "none"), cfg.get("fca_num_groups", 16), cfg.get("fca_num_circuits", 4), cfg.get("author_dq_branch_enabled", True), cfg.get("first_pool", "maxpool"), cfg.get("frequency_beta")).to(device)
