@@ -259,7 +259,8 @@ class TwoBlockDirectionalDWTQPACNN(nn.Module):
 
     has_quantum_auxiliary = False
 
-    def __init__(self, num_classes=2, hidden_dim=128, mode=None, relation_dim=8):
+    def __init__(self, num_classes=2, hidden_dim=128, mode=None, relation_dim=8,
+                 partial_value=False):
         super().__init__()
         if hidden_dim != 128:
             raise ValueError("TwoBlockDirectionalDWTQPACNN uses a fixed 128D GAP feature")
@@ -271,6 +272,7 @@ class TwoBlockDirectionalDWTQPACNN(nn.Module):
                 relation_dim=relation_dim,
                 mode=mode,
                 entangled=mode == "torchquantum",
+                partial_value=partial_value,
             )
         self.classifier = nn.Linear(128, num_classes)
 
@@ -301,3 +303,15 @@ class TwoBlockDirectionalDWTClassicalD16CNN(TwoBlockDirectionalDWTQPACNN):
 class TwoBlockDirectionalDWTQuantumD16CNN(TwoBlockDirectionalDWTQPACNN):
     def __init__(self, num_classes=2, hidden_dim=128):
         super().__init__(num_classes=num_classes, hidden_dim=hidden_dim, mode="torchquantum", relation_dim=16)
+
+
+class TwoBlockDirectionalDWTClassicalPartialD16CNN(TwoBlockDirectionalDWTQPACNN):
+    def __init__(self, num_classes=2, hidden_dim=128):
+        super().__init__(num_classes=num_classes, hidden_dim=hidden_dim, mode="classical",
+                         relation_dim=16, partial_value=True)
+
+
+class TwoBlockDirectionalDWTQuantumPartialD16CNN(TwoBlockDirectionalDWTQPACNN):
+    def __init__(self, num_classes=2, hidden_dim=128):
+        super().__init__(num_classes=num_classes, hidden_dim=hidden_dim, mode="torchquantum",
+                         relation_dim=16, partial_value=True)

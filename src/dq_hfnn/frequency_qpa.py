@@ -223,7 +223,7 @@ class DirectionalFrequencyQPAResidual(nn.Module):
 
     def __init__(self, channels=128, reduced_channels=64, relation_dim=16,
                  mode="torchquantum", entangled=True, alpha_max=0.10,
-                 alpha_init=0.02):
+                 alpha_init=0.02, partial_value=False):
         super().__init__()
         if relation_dim <= 0 or relation_dim > reduced_channels:
             raise ValueError("relation_dim must be in [1, reduced_channels]")
@@ -234,6 +234,7 @@ class DirectionalFrequencyQPAResidual(nn.Module):
         self.channels = channels
         self.reduced_channels = reduced_channels
         self.relation_dim = relation_dim
+        self.partial_value = partial_value
         self.mode = mode
         self.reduce = nn.Conv2d(channels, reduced_channels, 1, bias=False)
         self.high_gate = nn.Sequential(
@@ -283,7 +284,15 @@ class DirectionalFrequencyQPAResidual(nn.Module):
             q_active.unsqueeze(2), k_active.unsqueeze(1)
         ).mean(dim=-1)
         weights = pair_scores.softmax(dim=-1)
-        context = weights @ v
+        if self.partial_value:
+            # Partial attention: only active relation channels exchange
+            # information across tokens; the remaining value channels bypass.
+            context = torch.cat(
+                (weights @ v[..., :self.relation_dim], v[..., self.relation_dim:]),
+                dim=-1,
+            )
+        else:
+            context = weights @ v
         side = int(tokens ** 0.5)
         context = context.transpose(1, 2).reshape(batch, self.reduced_channels, side, side)
         base = F.avg_pool2d(ll, 2)
