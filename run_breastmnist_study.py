@@ -17,9 +17,13 @@ MODELS = (
 
 def main():
     parser = argparse.ArgumentParser()
+    parser.add_argument("--config", default=str(CONFIG))
     parser.add_argument("--seeds", default="42,456,789,5050,6060")
     parser.add_argument("--models", default=",".join(MODELS))
     args = parser.parse_args()
+    config_path = Path(args.config)
+    if not config_path.is_absolute():
+        config_path = ROOT / config_path
     seeds = [int(value) for value in args.seeds.split(",") if value.strip()]
     models = [value.strip() for value in args.models.split(",") if value.strip()]
     unknown = set(models) - set(MODELS)
@@ -29,7 +33,7 @@ def main():
     output.mkdir(exist_ok=True)
     for seed in seeds:
         for model_type in models:
-            cfg = json.loads(CONFIG.read_text(encoding="utf-8"))
+            cfg = json.loads(config_path.read_text(encoding="utf-8"))
             cfg["seed"] = seed
             cfg["model_type"] = model_type
             cfg["run_name"] = f"breastmnist_{model_type}"
