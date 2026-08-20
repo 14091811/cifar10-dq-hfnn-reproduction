@@ -1,0 +1,15 @@
+{
+  "run_name": "breastmnist_rotation_only_fixed50",
+  "dataset": "breastmnist",
+  "data_root": "medmnist_data",
+  "augmentation": "rotation_only_v1",
+  "num_classes": 2,
+  "hidden_dim": 128,
+  "seed": 42,
+  "epochs": 50,
+  "early_stopping_patience": 999,
+  "batch_size": 16,
+  "num_workers": 4,
+  "learning_rate": 0.001,
+  "weight_decay": 0.0001
+}

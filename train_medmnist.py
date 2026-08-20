@@ -153,12 +153,14 @@ def main():
     # Keep train-time augmentation separate from validation/test preprocessing.
     # The policy is configured once so all compared models see identical inputs.
     train_transforms = [transforms.Resize((32, 32))]
-    if cfg.get("augmentation") == "light_medical_v1":
+    augmentation = cfg.get("augmentation")
+    if augmentation in {"light_medical_v1", "flip_only_v1"}:
         train_transforms.extend([
             transforms.RandomHorizontalFlip(p=0.5),
             transforms.RandomVerticalFlip(p=0.5),
-            transforms.RandomRotation(15),
         ])
+    if augmentation in {"light_medical_v1", "rotation_only_v1"}:
+        train_transforms.append(transforms.RandomRotation(15))
     train_transforms.extend([
         transforms.ToTensor(),
         transforms.Lambda(lambda image: image.repeat(3, 1, 1) if image.shape[0] == 1 else image),
