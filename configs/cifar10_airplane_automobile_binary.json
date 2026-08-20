@@ -1,6 +1,6 @@
 {
   "run_name": "cifar10_airplane_automobile_binary",
-  "model_type": "compact_dwt_directional_classical_d8_cnn",
+  "model_type": "two_block_dwt_directional_classical_d8_cnn",
   "seed": 42,
   "epochs": 100,
   "batch_size": 64,

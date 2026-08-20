@@ -227,3 +227,67 @@ class CompactDirectionalDWTClassicalD8CNN(CompactDirectionalDWTQPACNN):
 class CompactDirectionalDWTQuantumD8CNN(CompactDirectionalDWTQPACNN):
     def __init__(self, num_classes=2, hidden_dim=128):
         super().__init__(num_classes=num_classes, hidden_dim=hidden_dim, mode="torchquantum", relation_dim=8)
+
+
+class TwoBlockBinaryBranch(nn.Module):
+    """Two residual blocks only, with a 128x16x16 DWT-QPA insertion point."""
+
+    def __init__(self):
+        super().__init__()
+        self.stem = nn.Sequential(
+            nn.Conv2d(3, 64, 3, padding=1, bias=False),
+            nn.BatchNorm2d(64),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(2),
+        )
+        self.block1 = Block(64, 128)
+        self.block2 = Block(128, 128)
+        self.pool = nn.AdaptiveAvgPool2d(1)
+        self.frequency_modulator = None
+
+    def forward(self, x):
+        x = self.stem(x)
+        x = self.block1(x)
+        if self.frequency_modulator is not None:
+            x = self.frequency_modulator(x)
+        x = self.block2(x)
+        return self.pool(x).flatten(1)
+
+
+class TwoBlockDirectionalDWTQPACNN(nn.Module):
+    """Paired two-block controls for the CIFAR binary small-sample study."""
+
+    has_quantum_auxiliary = False
+
+    def __init__(self, num_classes=2, hidden_dim=128, mode=None, relation_dim=8):
+        super().__init__()
+        if hidden_dim != 128:
+            raise ValueError("TwoBlockDirectionalDWTQPACNN uses a fixed 128D GAP feature")
+        self.classical = TwoBlockBinaryBranch()
+        if mode is not None:
+            self.classical.frequency_modulator = DirectionalFrequencyQPAResidual(
+                channels=128,
+                reduced_channels=64,
+                relation_dim=relation_dim,
+                mode=mode,
+                entangled=mode == "torchquantum",
+            )
+        self.classifier = nn.Linear(128, num_classes)
+
+    def forward(self, x):
+        return self.classifier(self.classical(x))
+
+
+class TwoBlockClassicalCNN(TwoBlockDirectionalDWTQPACNN):
+    def __init__(self, num_classes=2, hidden_dim=128):
+        super().__init__(num_classes=num_classes, hidden_dim=hidden_dim, mode=None)
+
+
+class TwoBlockDirectionalDWTClassicalD8CNN(TwoBlockDirectionalDWTQPACNN):
+    def __init__(self, num_classes=2, hidden_dim=128):
+        super().__init__(num_classes=num_classes, hidden_dim=hidden_dim, mode="classical", relation_dim=8)
+
+
+class TwoBlockDirectionalDWTQuantumD8CNN(TwoBlockDirectionalDWTQPACNN):
+    def __init__(self, num_classes=2, hidden_dim=128):
+        super().__init__(num_classes=num_classes, hidden_dim=hidden_dim, mode="torchquantum", relation_dim=8)

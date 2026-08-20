@@ -9,9 +9,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 CONFIG = ROOT / "configs" / "cifar10_airplane_automobile_binary.json"
 MODELS = (
-    "compact_classical_cnn",
-    "compact_dwt_directional_classical_d8_cnn",
-    "compact_dwt_directional_qpa_d8_cnn",
+    "two_block_classical_cnn",
+    "two_block_dwt_directional_classical_d8_cnn",
+    "two_block_dwt_directional_qpa_d8_cnn",
 )
 
 

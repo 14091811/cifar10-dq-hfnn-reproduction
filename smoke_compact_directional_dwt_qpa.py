@@ -11,6 +11,9 @@ from dq_hfnn.local_spa import (
     CompactClassicalCNN,
     CompactDirectionalDWTClassicalD8CNN,
     CompactDirectionalDWTQuantumD8CNN,
+    TwoBlockClassicalCNN,
+    TwoBlockDirectionalDWTClassicalD8CNN,
+    TwoBlockDirectionalDWTQuantumD8CNN,
 )
 
 
@@ -20,6 +23,9 @@ def main():
         "compact_classical_cnn": CompactClassicalCNN,
         "compact_dwt_directional_classical_d8_cnn": CompactDirectionalDWTClassicalD8CNN,
         "compact_dwt_directional_qpa_d8_cnn": CompactDirectionalDWTQuantumD8CNN,
+        "two_block_classical_cnn": TwoBlockClassicalCNN,
+        "two_block_dwt_directional_classical_d8_cnn": TwoBlockDirectionalDWTClassicalD8CNN,
+        "two_block_dwt_directional_qpa_d8_cnn": TwoBlockDirectionalDWTQuantumD8CNN,
     }
     print(f"device={device}")
     for name, model_class in models.items():
