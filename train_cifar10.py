@@ -10,7 +10,7 @@ from pathlib import Path
 import numpy as np
 import torch
 import torch.nn.functional as F
-from torch.utils.data import DataLoader, Subset
+from torch.utils.data import DataLoader, Dataset, Subset
 from torchvision import datasets, transforms
 
 ROOT = Path(__file__).resolve().parent
@@ -122,6 +122,60 @@ def evaluate(model, loader, device, num_classes, loss_fn):
     return metrics
 
 
+class RemappedSubset(Dataset):
+    """Subset that changes selected CIFAR-10 class ids to contiguous labels."""
+
+    def __init__(self, dataset, indices, label_map):
+        self.dataset = dataset
+        self.indices = indices
+        self.label_map = label_map
+
+    def __len__(self):
+        return len(self.indices)
+
+    def __getitem__(self, index):
+        image, label = self.dataset[self.indices[index]]
+        return image, self.label_map[int(label)]
+
+
+def build_binary_split(source, eval_source, cfg, root):
+    """Create or reuse a seed-specific, class-balanced binary split."""
+    classes = [int(value) for value in cfg["binary_classes"]]
+    split_root = root / cfg.get("split_dir", "splits")
+    split_root.mkdir(parents=True, exist_ok=True)
+    split_path = split_root / f"{cfg['binary_task_name']}_seed{cfg['seed']}.json"
+    if split_path.exists():
+        split = json.loads(split_path.read_text(encoding="utf-8"))
+        if split["seed"] != cfg["seed"] or split["classes"] != classes:
+            raise ValueError(f"Split metadata mismatch: {split_path}")
+    else:
+        targets = torch.as_tensor(source.targets)
+        generator = torch.Generator().manual_seed(cfg["seed"])
+        train_indices, val_indices = [], []
+        for label in classes:
+            candidates = torch.where(targets == label)[0]
+            order = torch.randperm(len(candidates), generator=generator)
+            selected = candidates[order[: cfg["train_per_class"] + cfg["val_per_class"]]].tolist()
+            train_indices.extend(selected[: cfg["train_per_class"]])
+            val_indices.extend(selected[cfg["train_per_class"] :])
+        train_indices = torch.tensor(train_indices)[torch.randperm(len(train_indices), generator=generator)].tolist()
+        val_indices = torch.tensor(val_indices)[torch.randperm(len(val_indices), generator=generator)].tolist()
+        split = {
+            "seed": cfg["seed"],
+            "classes": classes,
+            "label_map": {str(label): index for index, label in enumerate(classes)},
+            "train_indices": train_indices,
+            "val_indices": val_indices,
+        }
+        split_path.write_text(json.dumps(split, indent=2), encoding="utf-8")
+    label_map = {int(key): value for key, value in split["label_map"].items()}
+    return (
+        RemappedSubset(source, split["train_indices"], label_map),
+        RemappedSubset(eval_source, split["val_indices"], label_map),
+        split_path,
+    )
+
+
 def main():
     parser = argparse.ArgumentParser(); parser.add_argument("--config", type=Path, required=True); args = parser.parse_args()
     cfg = json.loads(args.config.read_text())
@@ -153,13 +207,26 @@ def main():
     root = ROOT / "data" / "cifar10"
     source = datasets.CIFAR10(root, train=True, download=True, transform=train_tf)
     val_source = datasets.CIFAR10(root, train=True, download=False, transform=eval_tf)
-    test = datasets.CIFAR10(root, train=False, download=True, transform=eval_tf)
-    if cfg.get("selection_protocol") == "test_per_epoch":
+    split_path = None
+    if cfg.get("binary_protocol"):
+        train, val, split_path = build_binary_split(source, val_source, cfg, ROOT)
+        test = None
+    else:
+        test = datasets.CIFAR10(root, train=False, download=True, transform=eval_tf)
+    if cfg.get("binary_protocol"):
+        pass
+    elif cfg.get("selection_protocol") == "test_per_epoch":
         train, val = source, test
     else:
         indices = torch.randperm(len(source), generator=torch.Generator().manual_seed(cfg["seed"])).tolist()
         split = round(len(indices) * cfg["validation_ratio"])
         train, val = Subset(source, indices[split:]), Subset(val_source, indices[:split])
+    if split_path is not None:
+        logger(
+            f"BinaryTask={cfg['binary_task_name']} Classes={cfg['binary_classes']} "
+            f"TrainPerClass={cfg['train_per_class']} ValPerClass={cfg['val_per_class']} "
+            f"Split={split_path}"
+        )
     loader_kwargs = dict(
         batch_size=cfg["batch_size"],
         num_workers=cfg["num_workers"],
@@ -174,7 +241,9 @@ def main():
         **loader_kwargs,
     )
     val_loader = DataLoader(val, shuffle=False, **loader_kwargs)
-    test_loader = DataLoader(test, shuffle=False, **loader_kwargs)
+    test_loader = (
+        DataLoader(test, shuffle=False, **loader_kwargs) if test is not None else None
+    )
     if cfg.get("model_type", "dq_hfnn") in {
         "frequency_qpa", "wide_twolevel_frequency_qpa", "fullwidth_twolevel_frequency_qpa"
     }:
@@ -328,9 +397,17 @@ def main():
         write_json(run_dir / "status.json", status)
     metrics_file.close()
     checkpoint = torch.load(run_dir / "best.pt", map_location=device); model.load_state_dict(checkpoint["state"])
-    test_metrics = evaluate(model, test_loader, device, cfg["num_classes"], loss_fn)
-    selection_name = "best_test_accuracy" if cfg.get("selection_protocol") == "test_per_epoch" else "best_validation_accuracy"
-    result = {"best_epoch": checkpoint["epoch"], selection_name: best, **{f"test_{key}": value for key, value in test_metrics.items()}}
+    if cfg.get("binary_protocol"):
+        result = {
+            "best_epoch": checkpoint["epoch"],
+            "best_validation_accuracy": best,
+            "protocol": "train_validation_only",
+            "split_file": str(split_path),
+        }
+    else:
+        test_metrics = evaluate(model, test_loader, device, cfg["num_classes"], loss_fn)
+        selection_name = "best_test_accuracy" if cfg.get("selection_protocol") == "test_per_epoch" else "best_validation_accuracy"
+        result = {"best_epoch": checkpoint["epoch"], selection_name: best, **{f"test_{key}": value for key, value in test_metrics.items()}}
     if (
         getattr(model, "feature_quantum_adapter", False)
         or getattr(model, "class_logit_residual", False)

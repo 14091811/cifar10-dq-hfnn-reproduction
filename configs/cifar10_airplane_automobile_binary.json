@@ -1,0 +1,23 @@
+{
+  "run_name": "cifar10_airplane_automobile_binary",
+  "model_type": "dwt_directional_classical_d8_cnn",
+  "seed": 42,
+  "epochs": 100,
+  "batch_size": 64,
+  "num_workers": 4,
+  "learning_rate": 0.01,
+  "weight_decay": 0.012,
+  "momentum": 0.9,
+  "milestones": [56, 78],
+  "gamma": 0.1,
+  "selection_protocol": "validation",
+  "deterministic": false,
+  "hidden_dim": 256,
+  "num_classes": 2,
+  "binary_protocol": true,
+  "binary_task_name": "cifar10_airplane_automobile",
+  "binary_classes": [0, 1],
+  "train_per_class": 500,
+  "val_per_class": 200,
+  "split_dir": "splits_qpsan_binary"
+}
