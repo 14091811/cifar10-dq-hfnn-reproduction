@@ -255,7 +255,7 @@ class DirectionalFrequencyQPAResidual(nn.Module):
                  mode="torchquantum", entangled=True, alpha_max=0.10,
                  alpha_init=0.02, partial_value=False, rope_2d=False,
                  bucketed_relative_position_bias=False, grouped_relation=False,
-                 group_size=4):
+                 group_size=4, learned_partial_selection=False):
         super().__init__()
         if relation_dim <= 0 or relation_dim > reduced_channels:
             raise ValueError("relation_dim must be in [1, reduced_channels]")
@@ -271,6 +271,7 @@ class DirectionalFrequencyQPAResidual(nn.Module):
         self.reduced_channels = reduced_channels
         self.relation_dim = relation_dim
         self.partial_value = partial_value
+        self.learned_partial_selection = learned_partial_selection
         self.rope_2d = rope_2d
         self.bucketed_relative_position_bias = bucketed_relative_position_bias
         self.grouped_relation = grouped_relation
@@ -290,6 +291,17 @@ class DirectionalFrequencyQPAResidual(nn.Module):
             ClassicalQPAScorer() if mode == "classical"
             else TorchQuantumQPAScorer(entangled=entangled)
         )
+        if learned_partial_selection:
+            if not partial_value or relation_dim != 16 or reduced_channels != 64:
+                raise ValueError(
+                    "learned partial selection currently requires partial_value=True, "
+                    "relation_dim=16, and reduced_channels=64"
+                )
+            # Each row softly selects one active relation dimension from the 64D Q/K/V.
+            # The diagonal initialization preserves the original fixed-first-16 control.
+            self.partial_selector_logits = nn.Parameter(torch.full((relation_dim, reduced_channels), -4.0))
+            with torch.no_grad():
+                self.partial_selector_logits.diagonal().fill_(4.0)
         if grouped_relation:
             group_count = relation_dim // group_size
             self.group_q_projection = nn.Linear(group_size, 1, bias=False)
@@ -334,8 +346,14 @@ class DirectionalFrequencyQPAResidual(nn.Module):
         q = q.flatten(2).transpose(1, 2)
         k = k.flatten(2).transpose(1, 2)
         v = v.flatten(2).transpose(1, 2)
-        q_active = q[..., :self.relation_dim]
-        k_active = k[..., :self.relation_dim]
+        if self.learned_partial_selection:
+            selector = self.partial_selector_logits.softmax(dim=-1)
+            q_active = torch.einsum("bnd,rd->bnr", q, selector)
+            k_active = torch.einsum("bnd,rd->bnr", k, selector)
+            v_active = torch.einsum("bnd,rd->bnr", v, selector)
+        else:
+            q_active = q[..., :self.relation_dim]
+            k_active = k[..., :self.relation_dim]
         if self.grouped_relation:
             batch_size, token_count, _ = q_active.shape
             group_count = self.relation_dim // self.group_size
@@ -359,10 +377,9 @@ class DirectionalFrequencyQPAResidual(nn.Module):
         if self.partial_value:
             # Partial attention: only active relation channels exchange
             # information across tokens; the remaining value channels bypass.
-            context = torch.cat(
-                (weights @ v[..., :self.relation_dim], v[..., self.relation_dim:]),
-                dim=-1,
-            )
+            attended_active = weights @ (v_active if self.learned_partial_selection else v[..., :self.relation_dim])
+            bypass = v[..., self.relation_dim:]
+            context = torch.cat((attended_active, bypass), dim=-1)
         else:
             context = weights @ v
         side = int(tokens ** 0.5)

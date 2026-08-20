@@ -1,4 +1,4 @@
-"""Run the BreastMNIST QPSAN-style partial attention comparison."""
+"""Run the BreastMNIST learned partial attention comparison."""
 
 import argparse
 import json
@@ -10,8 +10,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 CONFIG = ROOT / "configs" / "breastmnist_paper_protocol.json"
 MODELS = (
-    "two_block_dwt_directional_classical_partial_d16_cnn",
-    "two_block_dwt_directional_qpa_partial_d16_cnn",
+    "two_block_dwt_directional_classical_learned_partial_d16_cnn",
+    "two_block_dwt_directional_qpa_learned_partial_d16_cnn",
 )
 
 
