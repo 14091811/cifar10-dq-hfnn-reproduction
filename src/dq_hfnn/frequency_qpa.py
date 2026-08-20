@@ -219,12 +219,7 @@ class FrequencyQPAResidual(nn.Module):
 
 
 class DirectionalFrequencyQPAResidual(nn.Module):
-    """QPA residual that uses only LH/HL; HH is an IDWT-only bypass.
-
-    The 16-dimensional Q/K relation space controls aggregation of the
-    directional detail values. LL remains the low-frequency base and HH is
-    deliberately excluded from the attention path.
-    """
+    """DWA-faithful QPA residual: LL carries Q/K/V, LH/HL gate V, HH bypasses."""
 
     def __init__(self, channels=128, reduced_channels=64, relation_dim=16,
                  mode="torchquantum", entangled=True, alpha_max=0.10,
@@ -241,11 +236,15 @@ class DirectionalFrequencyQPAResidual(nn.Module):
         self.relation_dim = relation_dim
         self.mode = mode
         self.reduce = nn.Conv2d(channels, reduced_channels, 1, bias=False)
-        directional_channels = reduced_channels * 2
-        self.q_projection = nn.Conv2d(directional_channels, relation_dim, 1, bias=False)
-        self.k_projection = nn.Conv2d(directional_channels, relation_dim, 1, bias=False)
-        self.v_projection = nn.Conv2d(directional_channels, directional_channels, 1, bias=False)
-        self.output_projection = nn.Conv2d(directional_channels, directional_channels, 1, bias=False)
+        self.high_gate = nn.Sequential(
+            nn.Conv2d(reduced_channels * 2, reduced_channels * 2, 3,
+                      padding=1, groups=reduced_channels * 2, bias=False),
+            nn.GELU(),
+            nn.Conv2d(reduced_channels * 2, reduced_channels, 1, bias=False),
+            nn.Sigmoid(),
+        )
+        self.qkv = nn.Conv2d(reduced_channels, reduced_channels * 3, 1, bias=False)
+        self.output_projection = nn.Conv2d(reduced_channels, reduced_channels, 1, bias=False)
         self.scorer = (
             ClassicalQPAScorer() if mode == "classical"
             else TorchQuantumQPAScorer(entangled=entangled)
@@ -255,7 +254,7 @@ class DirectionalFrequencyQPAResidual(nn.Module):
         self.alpha_logit = nn.Parameter(
             torch.logit(torch.tensor(alpha_init / alpha_max))
         )
-        for layer in (self.q_projection, self.k_projection, self.v_projection,
+        for layer in (self.high_gate[0], self.high_gate[2], self.qkv,
                       self.output_projection, self.expand):
             nn.init.kaiming_uniform_(layer.weight, a=math.sqrt(5))
         # Start as a nearly identity path while retaining gradients in QPA.
@@ -269,25 +268,30 @@ class DirectionalFrequencyQPAResidual(nn.Module):
         reduced = self.reduce(x)
         ll, lh, hl, hh = haar_dwt2(reduced)
         batch, _, height, width = lh.shape
-        directional = torch.cat((lh, hl), dim=1)
-        q = F.avg_pool2d(self.q_projection(directional), 2)
-        k = F.avg_pool2d(self.k_projection(directional), 2)
-        v = F.avg_pool2d(self.v_projection(directional), 2)
+        # DWA uses directional LH/HL evidence as a reliability gate. HH is
+        # intentionally absent here and is only retained for reconstruction.
+        block_gate = F.avg_pool2d(self.high_gate(torch.cat((lh, hl), dim=1)), 2)
+        q, k, v = self.qkv(ll).chunk(3, dim=1)
+        q, k, v = (F.avg_pool2d(tensor, 2) for tensor in (q, k, v))
         tokens = q.shape[-2] * q.shape[-1]
         q = q.flatten(2).transpose(1, 2)
         k = k.flatten(2).transpose(1, 2)
         v = v.flatten(2).transpose(1, 2)
-        pair_scores = self.scorer(q.unsqueeze(2), k.unsqueeze(1)).mean(dim=-1)
+        q_active = q[..., :self.relation_dim]
+        k_active = k[..., :self.relation_dim]
+        pair_scores = self.scorer(
+            q_active.unsqueeze(2), k_active.unsqueeze(1)
+        ).mean(dim=-1)
         weights = pair_scores.softmax(dim=-1)
         context = weights @ v
-        context = context.transpose(1, 2).reshape(
-            batch, self.reduced_channels * 2, int(tokens ** 0.5), int(tokens ** 0.5)
-        )
-        context = F.interpolate(context, size=(height, width), mode="nearest")
-        detail_update = self.output_projection(context)
-        lh_update, hl_update = detail_update.chunk(2, dim=1)
-        reconstruction = haar_idwt2(ll, lh + self.alpha * lh_update,
-                                     hl + self.alpha * hl_update, hh)
+        side = int(tokens ** 0.5)
+        context = context.transpose(1, 2).reshape(batch, self.reduced_channels, side, side)
+        base = F.avg_pool2d(ll, 2)
+        delta = F.interpolate(self.output_projection(context - base),
+                              size=(height, width), mode="nearest")
+        block_gate = F.interpolate(block_gate, size=(height, width), mode="nearest")
+        updated_ll = ll + block_gate * delta
+        reconstruction = haar_idwt2(updated_ll, lh, hl, hh)
         return x + self.alpha * self.expand(reconstruction)
 
 
