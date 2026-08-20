@@ -149,12 +149,14 @@ def main():
     run_dir, experiment_name, started_at = create_run_directory(ROOT, cfg["run_name"], cfg["seed"])
     write_json(run_dir / "config.json", cfg)
 
+    dataset_class = load_dataset_class(cfg["dataset"])
+    # The backbone expects RGB-like input. Grayscale MedMNIST samples are
+    # replicated to three channels; RGB datasets must remain unchanged.
     transform = transforms.Compose([
         transforms.Resize((32, 32)),
         transforms.ToTensor(),
-        transforms.Lambda(lambda image: image.repeat(3, 1, 1)),
+        transforms.Lambda(lambda image: image.repeat(3, 1, 1) if image.shape[0] == 1 else image),
     ])
-    dataset_class = load_dataset_class(cfg["dataset"])
     root = ROOT / cfg.get("data_root", "medmnist_data")
     train_set = dataset_class(split="train", root=str(root), transform=transform, download=False)
     val_set = dataset_class(split="val", root=str(root), transform=transform, download=False)

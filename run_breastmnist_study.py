@@ -31,7 +31,7 @@ def main():
     unknown = set(models) - set(MODELS)
     if unknown:
         raise ValueError(f"Unsupported models: {sorted(unknown)}")
-    output = ROOT / "configs" / "generated_breastmnist"
+    output = ROOT / "configs" / f"generated_{json.loads(base_config_path.read_text(encoding='utf-8'))['dataset']}"
     output.mkdir(exist_ok=True)
     for seed in seeds:
         for model_type in models:
