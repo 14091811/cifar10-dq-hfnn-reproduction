@@ -1,4 +1,4 @@
-"""Run the BreastMNIST grouped-relation D64 comparison."""
+"""Run the BreastMNIST QPSAN-style partial attention comparison."""
 
 import argparse
 import json
@@ -10,8 +10,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 CONFIG = ROOT / "configs" / "breastmnist_paper_protocol.json"
 MODELS = (
-    "two_block_dwt_directional_classical_grouped_d64_cnn",
-    "two_block_dwt_directional_qpa_grouped_d64_cnn",
+    "two_block_dwt_directional_classical_partial_d16_cnn",
+    "two_block_dwt_directional_qpa_partial_d16_cnn",
 )
 
 
@@ -21,9 +21,9 @@ def main():
     parser.add_argument("--seeds", default="42,456,789,5050,6060")
     parser.add_argument("--models", default=",".join(MODELS))
     args = parser.parse_args()
-    config_path = Path(args.config)
-    if not config_path.is_absolute():
-        config_path = ROOT / config_path
+    base_config_path = Path(args.config)
+    if not base_config_path.is_absolute():
+        base_config_path = ROOT / base_config_path
     seeds = [int(value) for value in args.seeds.split(",") if value.strip()]
     models = [value.strip() for value in args.models.split(",") if value.strip()]
     unknown = set(models) - set(MODELS)
@@ -33,15 +33,15 @@ def main():
     output.mkdir(exist_ok=True)
     for seed in seeds:
         for model_type in models:
-            cfg = json.loads(config_path.read_text(encoding="utf-8"))
+            cfg = json.loads(base_config_path.read_text(encoding="utf-8"))
             cfg["seed"] = seed
             cfg["model_type"] = model_type
             cfg["run_name"] = f"breastmnist_{model_type}"
-            config_path = output / f"{model_type}_seed{seed}.json"
-            config_path.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
+            generated_config_path = output / f"{model_type}_seed{seed}.json"
+            generated_config_path.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
             print(f"starting model={model_type} seed={seed}", flush=True)
             subprocess.run(
-                [sys.executable, "-u", "train_medmnist.py", "--config", str(config_path)],
+                [sys.executable, "-u", "train_medmnist.py", "--config", str(generated_config_path)],
                 cwd=ROOT,
                 check=True,
             )
