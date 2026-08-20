@@ -5,7 +5,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from .frequency_qpa import DirectionalFrequencyQPAResidual, FrequencyQPAResidual
-from .model import ClassicalBranch
+from .model import Block, ClassicalBranch
 
 
 class GCStyleAttention(nn.Module):
@@ -164,3 +164,66 @@ class DirectionalDWTQuantumD8CNN(DirectionalDWTQPACNN):
     def __init__(self, num_classes=10, hidden_dim=256):
         super().__init__(num_classes=num_classes, hidden_dim=hidden_dim,
                          mode="torchquantum", relation_dim=8)
+
+
+class CompactClassicalBranch(nn.Module):
+    """Capacity-controlled CIFAR backbone with a 128x16x16 frequency tap."""
+
+    def __init__(self, hidden_dim):
+        super().__init__()
+        self.features = nn.Sequential(
+            Block(3, 32),
+            nn.MaxPool2d(2),
+            Block(32, 64),
+            Block(64, 128),
+            nn.MaxPool2d(2),
+            Block(128, 128),
+            nn.MaxPool2d(2),
+        )
+        self.project = nn.Sequential(nn.Dropout(0.25), nn.Linear(128 * 4 * 4, hidden_dim))
+        self.frequency_modulator = None
+        self.frequency_tap_index = 3
+
+    def forward(self, x):
+        for index, layer in enumerate(self.features):
+            x = layer(x)
+            if self.frequency_modulator is not None and index == self.frequency_tap_index:
+                x = self.frequency_modulator(x)
+        return self.project(x.flatten(1))
+
+
+class CompactDirectionalDWTQPACNN(nn.Module):
+    """Compact paired control for binary small-sample DWT-QPA experiments."""
+
+    has_quantum_auxiliary = False
+
+    def __init__(self, num_classes=2, hidden_dim=128, mode=None, relation_dim=8):
+        super().__init__()
+        self.classical = CompactClassicalBranch(hidden_dim)
+        if mode is not None:
+            self.classical.frequency_modulator = DirectionalFrequencyQPAResidual(
+                channels=128,
+                reduced_channels=64,
+                relation_dim=relation_dim,
+                mode=mode,
+                entangled=mode == "torchquantum",
+            )
+        self.classifier = nn.Linear(hidden_dim, num_classes)
+
+    def forward(self, x):
+        return self.classifier(self.classical(x))
+
+
+class CompactClassicalCNN(CompactDirectionalDWTQPACNN):
+    def __init__(self, num_classes=2, hidden_dim=128):
+        super().__init__(num_classes=num_classes, hidden_dim=hidden_dim, mode=None)
+
+
+class CompactDirectionalDWTClassicalD8CNN(CompactDirectionalDWTQPACNN):
+    def __init__(self, num_classes=2, hidden_dim=128):
+        super().__init__(num_classes=num_classes, hidden_dim=hidden_dim, mode="classical", relation_dim=8)
+
+
+class CompactDirectionalDWTQuantumD8CNN(CompactDirectionalDWTQPACNN):
+    def __init__(self, num_classes=2, hidden_dim=128):
+        super().__init__(num_classes=num_classes, hidden_dim=hidden_dim, mode="torchquantum", relation_dim=8)

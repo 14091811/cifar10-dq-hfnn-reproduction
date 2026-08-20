@@ -1,6 +1,6 @@
 {
   "run_name": "cifar10_airplane_automobile_binary",
-  "model_type": "dwt_directional_classical_d8_cnn",
+  "model_type": "compact_dwt_directional_classical_d8_cnn",
   "seed": 42,
   "epochs": 100,
   "batch_size": 64,
@@ -12,7 +12,7 @@
   "gamma": 0.1,
   "selection_protocol": "validation",
   "deterministic": false,
-  "hidden_dim": 256,
+  "hidden_dim": 128,
   "num_classes": 2,
   "binary_protocol": true,
   "binary_task_name": "cifar10_airplane_automobile",
