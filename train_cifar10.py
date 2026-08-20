@@ -29,6 +29,8 @@ from dq_hfnn.local_spa import (
     TwoBlockClassicalCNN,
     TwoBlockDirectionalDWTClassicalD8CNN,
     TwoBlockDirectionalDWTQuantumD8CNN,
+    TwoBlockDirectionalDWTClassicalD16CNN,
+    TwoBlockDirectionalDWTQuantumD16CNN,
     DirectionalDWTClassicalCNN,
     DirectionalDWTClassicalD8CNN,
     DirectionalDWTQuantumCNN,
@@ -281,6 +283,8 @@ def main():
         "two_block_classical_cnn",
         "two_block_dwt_directional_classical_d8_cnn",
         "two_block_dwt_directional_qpa_d8_cnn",
+        "two_block_dwt_directional_classical_d16_cnn",
+        "two_block_dwt_directional_qpa_d16_cnn",
     }:
         local_models = {
             "classical_cnn": ClassicalCNN,
@@ -297,6 +301,8 @@ def main():
             "two_block_classical_cnn": TwoBlockClassicalCNN,
             "two_block_dwt_directional_classical_d8_cnn": TwoBlockDirectionalDWTClassicalD8CNN,
             "two_block_dwt_directional_qpa_d8_cnn": TwoBlockDirectionalDWTQuantumD8CNN,
+            "two_block_dwt_directional_classical_d16_cnn": TwoBlockDirectionalDWTClassicalD16CNN,
+            "two_block_dwt_directional_qpa_d16_cnn": TwoBlockDirectionalDWTQuantumD16CNN,
         }
         model = local_models[cfg["model_type"]](
             num_classes=cfg["num_classes"],

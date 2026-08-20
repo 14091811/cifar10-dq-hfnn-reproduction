@@ -10,8 +10,8 @@ ROOT = Path(__file__).resolve().parent
 CONFIG = ROOT / "configs" / "cifar10_airplane_automobile_binary.json"
 MODELS = (
     "two_block_classical_cnn",
-    "two_block_dwt_directional_classical_d8_cnn",
-    "two_block_dwt_directional_qpa_d8_cnn",
+    "two_block_dwt_directional_classical_d16_cnn",
+    "two_block_dwt_directional_qpa_d16_cnn",
 )
 
 
