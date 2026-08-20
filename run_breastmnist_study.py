@@ -1,4 +1,4 @@
-"""Run the matched BreastMNIST CNN, DWT-classical, and DWT-QPA study."""
+"""Run the matched BreastMNIST single-head D16 comparison."""
 
 import argparse
 import json
@@ -10,9 +10,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 CONFIG = ROOT / "configs" / "breastmnist_paper_protocol.json"
 MODELS = (
-    "two_block_classical_cnn",
-    "two_block_dwt_directional_classical_d8_cnn",
-    "two_block_dwt_directional_qpa_d8_cnn",
+    "two_block_dwt_directional_classical_d16_cnn",
+    "two_block_dwt_directional_qpa_d16_cnn",
 )
 
 

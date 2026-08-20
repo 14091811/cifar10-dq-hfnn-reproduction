@@ -21,6 +21,8 @@ from dq_hfnn.local_spa import (
     TwoBlockClassicalCNN,
     TwoBlockDirectionalDWTClassicalD8CNN,
     TwoBlockDirectionalDWTQuantumD8CNN,
+    TwoBlockDirectionalDWTClassicalD16CNN,
+    TwoBlockDirectionalDWTQuantumD16CNN,
 )
 from dq_hfnn.run_io import create_run_directory, write_json
 
@@ -29,6 +31,8 @@ MODELS = {
     "two_block_classical_cnn": TwoBlockClassicalCNN,
     "two_block_dwt_directional_classical_d8_cnn": TwoBlockDirectionalDWTClassicalD8CNN,
     "two_block_dwt_directional_qpa_d8_cnn": TwoBlockDirectionalDWTQuantumD8CNN,
+    "two_block_dwt_directional_classical_d16_cnn": TwoBlockDirectionalDWTClassicalD16CNN,
+    "two_block_dwt_directional_qpa_d16_cnn": TwoBlockDirectionalDWTQuantumD16CNN,
 }
 
 
