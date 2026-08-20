@@ -15,6 +15,7 @@ venv/
 
 # Datasets and generated experiment artifacts
 data/
+medmnist_data/
 runs/
 studies/
 outputs/
