@@ -150,17 +150,30 @@ def main():
     write_json(run_dir / "config.json", cfg)
 
     dataset_class = load_dataset_class(cfg["dataset"])
-    # The backbone expects RGB-like input. Grayscale MedMNIST samples are
-    # replicated to three channels; RGB datasets must remain unchanged.
-    transform = transforms.Compose([
-        transforms.Resize((32, 32)),
+    # Keep train-time augmentation separate from validation/test preprocessing.
+    # The policy is configured once so all compared models see identical inputs.
+    train_transforms = [transforms.Resize((32, 32))]
+    if cfg.get("augmentation") == "light_medical_v1":
+        train_transforms.extend([
+            transforms.RandomHorizontalFlip(p=0.5),
+            transforms.RandomVerticalFlip(p=0.5),
+            transforms.RandomRotation(15),
+        ])
+    train_transforms.extend([
         transforms.ToTensor(),
         transforms.Lambda(lambda image: image.repeat(3, 1, 1) if image.shape[0] == 1 else image),
     ])
+    eval_transforms = [
+        transforms.Resize((32, 32)),
+        transforms.ToTensor(),
+        transforms.Lambda(lambda image: image.repeat(3, 1, 1) if image.shape[0] == 1 else image),
+    ]
+    train_transform = transforms.Compose(train_transforms)
+    eval_transform = transforms.Compose(eval_transforms)
     root = ROOT / cfg.get("data_root", "medmnist_data")
-    train_set = dataset_class(split="train", root=str(root), transform=transform, download=False)
-    val_set = dataset_class(split="val", root=str(root), transform=transform, download=False)
-    test_set = dataset_class(split="test", root=str(root), transform=transform, download=False)
+    train_set = dataset_class(split="train", root=str(root), transform=train_transform, download=False)
+    val_set = dataset_class(split="val", root=str(root), transform=eval_transform, download=False)
+    test_set = dataset_class(split="test", root=str(root), transform=eval_transform, download=False)
     num_classes = int(cfg["num_classes"])
     loader_args = dict(batch_size=cfg["batch_size"], num_workers=cfg["num_workers"], pin_memory=device.type == "cuda")
     train_loader = DataLoader(train_set, shuffle=True, generator=torch.Generator().manual_seed(cfg["seed"]), **loader_args)
