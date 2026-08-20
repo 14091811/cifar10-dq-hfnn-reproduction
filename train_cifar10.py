@@ -23,6 +23,8 @@ from dq_hfnn.frequency_qpa_model import (
 )
 from dq_hfnn.local_spa import (
     ClassicalCNN,
+    DirectionalDWTClassicalCNN,
+    DirectionalDWTQuantumCNN,
     DWTClassicalSPACNN,
     DWTQPASPACNN,
     YangSPACNN,
@@ -192,12 +194,16 @@ def main():
         "yang_spa_cnn",
         "dwt_classical_spa_cnn",
         "dwt_qpa_spa_cnn",
+        "dwt_directional_classical_cnn",
+        "dwt_directional_qpa_cnn",
     }:
         local_models = {
             "classical_cnn": ClassicalCNN,
             "yang_spa_cnn": YangSPACNN,
             "dwt_classical_spa_cnn": DWTClassicalSPACNN,
             "dwt_qpa_spa_cnn": DWTQPASPACNN,
+            "dwt_directional_classical_cnn": DirectionalDWTClassicalCNN,
+            "dwt_directional_qpa_cnn": DirectionalDWTQuantumCNN,
         }
         model = local_models[cfg["model_type"]](
             num_classes=cfg["num_classes"],

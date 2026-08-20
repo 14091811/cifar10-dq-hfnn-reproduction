@@ -14,6 +14,8 @@ MODELS = (
     "yang_spa_cnn",
     "dwt_classical_spa_cnn",
     "dwt_qpa_spa_cnn",
+    "dwt_directional_classical_cnn",
+    "dwt_directional_qpa_cnn",
 )
 
 

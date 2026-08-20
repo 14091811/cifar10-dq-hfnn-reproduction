@@ -218,6 +218,79 @@ class FrequencyQPAResidual(nn.Module):
         return x + self.alpha * self.expand(reconstruction)
 
 
+class DirectionalFrequencyQPAResidual(nn.Module):
+    """QPA residual that uses only LH/HL; HH is an IDWT-only bypass.
+
+    The 16-dimensional Q/K relation space controls aggregation of the
+    directional detail values. LL remains the low-frequency base and HH is
+    deliberately excluded from the attention path.
+    """
+
+    def __init__(self, channels=128, reduced_channels=64, relation_dim=16,
+                 mode="torchquantum", entangled=True, alpha_max=0.10,
+                 alpha_init=0.02):
+        super().__init__()
+        if relation_dim <= 0 or relation_dim > reduced_channels:
+            raise ValueError("relation_dim must be in [1, reduced_channels]")
+        if not 0.0 < alpha_init < alpha_max:
+            raise ValueError("alpha_init must be between zero and alpha_max")
+        if mode not in {"classical", "torchquantum"}:
+            raise ValueError(f"Unsupported directional QPA mode: {mode}")
+        self.channels = channels
+        self.reduced_channels = reduced_channels
+        self.relation_dim = relation_dim
+        self.mode = mode
+        self.reduce = nn.Conv2d(channels, reduced_channels, 1, bias=False)
+        directional_channels = reduced_channels * 2
+        self.q_projection = nn.Conv2d(directional_channels, relation_dim, 1, bias=False)
+        self.k_projection = nn.Conv2d(directional_channels, relation_dim, 1, bias=False)
+        self.v_projection = nn.Conv2d(directional_channels, directional_channels, 1, bias=False)
+        self.output_projection = nn.Conv2d(directional_channels, directional_channels, 1, bias=False)
+        self.scorer = (
+            ClassicalQPAScorer() if mode == "classical"
+            else TorchQuantumQPAScorer(entangled=entangled)
+        )
+        self.expand = nn.Conv2d(reduced_channels, channels, 1, bias=False)
+        self.alpha_max = alpha_max
+        self.alpha_logit = nn.Parameter(
+            torch.logit(torch.tensor(alpha_init / alpha_max))
+        )
+        for layer in (self.q_projection, self.k_projection, self.v_projection,
+                      self.output_projection, self.expand):
+            nn.init.kaiming_uniform_(layer.weight, a=math.sqrt(5))
+        # Start as a nearly identity path while retaining gradients in QPA.
+        nn.init.zeros_(self.output_projection.weight)
+
+    @property
+    def alpha(self):
+        return self.alpha_max * self.alpha_logit.sigmoid()
+
+    def forward(self, x):
+        reduced = self.reduce(x)
+        ll, lh, hl, hh = haar_dwt2(reduced)
+        batch, _, height, width = lh.shape
+        directional = torch.cat((lh, hl), dim=1)
+        q = F.avg_pool2d(self.q_projection(directional), 2)
+        k = F.avg_pool2d(self.k_projection(directional), 2)
+        v = F.avg_pool2d(self.v_projection(directional), 2)
+        tokens = q.shape[-2] * q.shape[-1]
+        q = q.flatten(2).transpose(1, 2)
+        k = k.flatten(2).transpose(1, 2)
+        v = v.flatten(2).transpose(1, 2)
+        pair_scores = self.scorer(q.unsqueeze(2), k.unsqueeze(1)).mean(dim=-1)
+        weights = pair_scores.softmax(dim=-1)
+        context = weights @ v
+        context = context.transpose(1, 2).reshape(
+            batch, self.reduced_channels * 2, int(tokens ** 0.5), int(tokens ** 0.5)
+        )
+        context = F.interpolate(context, size=(height, width), mode="nearest")
+        detail_update = self.output_projection(context)
+        lh_update, hl_update = detail_update.chunk(2, dim=1)
+        reconstruction = haar_idwt2(ll, lh + self.alpha * lh_update,
+                                     hl + self.alpha * hl_update, hh)
+        return x + self.alpha * self.expand(reconstruction)
+
+
 class WideTwoLevelFrequencyQPAAttention(nn.Module):
     """Use narrow frequency-conditioned Q/K scores to aggregate wide value tokens."""
 

@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from .frequency_qpa import FrequencyQPAResidual
+from .frequency_qpa import DirectionalFrequencyQPAResidual, FrequencyQPAResidual
 from .model import ClassicalBranch
 
 
@@ -117,3 +117,37 @@ class DWTClassicalSPACNN(LocalSPACNN):
 class DWTQPASPACNN(LocalSPACNN):
     def __init__(self, num_classes=10, hidden_dim=256):
         super().__init__(num_classes=num_classes, hidden_dim=hidden_dim, attention="dwt_qpa", qpa_mode="torchquantum")
+
+
+class DirectionalDWTQPACNN(nn.Module):
+    """CNN with a standalone DWT-QPA residual at the 128-channel tap."""
+
+    has_quantum_auxiliary = False
+
+    def __init__(self, num_classes=10, hidden_dim=256, mode="torchquantum"):
+        super().__init__()
+        self.classical = ClassicalBranch(hidden_dim)
+        self.classical.frequency_tap_index = 3
+        self.classical.frequency_modulator = DirectionalFrequencyQPAResidual(
+            channels=128,
+            reduced_channels=64,
+            relation_dim=16,
+            mode=mode,
+            entangled=mode == "torchquantum",
+        )
+        self.classifier = nn.Linear(hidden_dim, num_classes)
+
+    def forward(self, x):
+        return self.classifier(self.classical(x))
+
+
+class DirectionalDWTClassicalCNN(DirectionalDWTQPACNN):
+    def __init__(self, num_classes=10, hidden_dim=256):
+        super().__init__(num_classes=num_classes, hidden_dim=hidden_dim,
+                         mode="classical")
+
+
+class DirectionalDWTQuantumCNN(DirectionalDWTQPACNN):
+    def __init__(self, num_classes=10, hidden_dim=256):
+        super().__init__(num_classes=num_classes, hidden_dim=hidden_dim,
+                         mode="torchquantum")
