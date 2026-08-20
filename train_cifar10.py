@@ -13,6 +13,11 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset, Subset
 from torchvision import datasets, transforms
 
+try:
+    from sklearn.metrics import roc_auc_score
+except ImportError:
+    roc_auc_score = None
+
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT / "src"))
 from dq_hfnn.model import DQHFNN
@@ -108,16 +113,32 @@ class RunLogger:
 
 def evaluate(model, loader, device, num_classes, loss_fn):
     model.eval(); confusion = torch.zeros(num_classes, num_classes, dtype=torch.long); loss_sum = 0.0
+    all_labels, all_probabilities = [], []
     with torch.no_grad():
         for images, labels in loader:
-            images = images.to(device); logits = model(images); predictions = logits.argmax(1).cpu()
+            images = images.to(device); logits = model(images)
+            probabilities = logits.softmax(dim=1).cpu()
+            predictions = probabilities.argmax(1)
             loss_sum += loss_fn(logits, labels.to(device)).item() * labels.numel()
             confusion += torch.bincount(labels * num_classes + predictions, minlength=num_classes ** 2).reshape(num_classes, num_classes)
+            all_labels.append(labels.cpu())
+            all_probabilities.append(probabilities)
     total = confusion.sum().float(); true_positive = confusion.diag().float()
     precision = true_positive / confusion.sum(dim=0).clamp_min(1)
     recall = true_positive / confusion.sum(dim=1).clamp_min(1)
     f1 = 2 * precision * recall / (precision + recall).clamp_min(1e-12)
     specificity = (total - confusion.sum(dim=0).float() - confusion.sum(dim=1).float() + true_positive) / (total - confusion.sum(dim=1).float()).clamp_min(1)
+    labels_np = torch.cat(all_labels).numpy()
+    probabilities_np = torch.cat(all_probabilities).numpy()
+    auc = None
+    if roc_auc_score is not None and len(np.unique(labels_np)) > 1:
+        try:
+            if num_classes == 2:
+                auc = float(roc_auc_score(labels_np, probabilities_np[:, 1]))
+            else:
+                auc = float(roc_auc_score(labels_np, probabilities_np, multi_class="ovr", average="macro"))
+        except ValueError:
+            auc = None
     metrics = {
         "loss": loss_sum / total.item(),
         "accuracy": (true_positive.sum() / total).item(),
@@ -125,6 +146,7 @@ def evaluate(model, loader, device, num_classes, loss_fn):
         "macro_recall": recall.mean().item(),
         "macro_f1": f1.mean().item(),
         "macro_specificity": specificity.mean().item(),
+        "auc": auc,
         "confusion_matrix": confusion.tolist(),
     }
     return metrics
@@ -388,11 +410,14 @@ def main():
                 record["pool_beta"] = modulator.fixed_beta
         history.append(record)
         is_best = val_metrics["accuracy"] > best
+        auc_text = "NA" if val_metrics["auc"] is None else f"{val_metrics['auc'] * 100:.2f}%"
         logger(
             f"Ep{epoch}: TrLoss={record['train_loss']:.4f} TrAcc={record['train_accuracy'] * 100:.2f}% | "
-            f"VLoss={val_metrics['loss']:.4f} VAcc={val_metrics['accuracy'] * 100:.2f}% "
-            f"VP={val_metrics['macro_precision'] * 100:.2f}% VR={val_metrics['macro_recall'] * 100:.2f}% "
-            f"VS={val_metrics['macro_specificity'] * 100:.2f}% VF1={val_metrics['macro_f1'] * 100:.2f}% | "
+            f"ValLoss={val_metrics['loss']:.4f} Acc={val_metrics['accuracy'] * 100:.2f}% "
+            f"Precision={val_metrics['macro_precision'] * 100:.2f}% "
+            f"Recall={val_metrics['macro_recall'] * 100:.2f}% "
+            f"Specificity={val_metrics['macro_specificity'] * 100:.2f}% "
+            f"F1={val_metrics['macro_f1'] * 100:.2f}% AUC={auc_text} | "
             + (
                 f" QTrLoss={record['train_quantum_loss']:.4f} Alpha={record['fusion_alpha']:.4f}"
                 if model.has_quantum_auxiliary
@@ -414,6 +439,7 @@ def main():
         metrics_file.write(json.dumps(record) + "\n")
         if is_best:
             best = val_metrics["accuracy"]
+            best_val_metrics = dict(val_metrics)
             status["best_accuracy"] = best
             status["best_epoch"] = epoch
             torch.save({"epoch": epoch, "state": model.state_dict()}, run_dir / "best.pt")
@@ -421,17 +447,24 @@ def main():
         write_json(run_dir / "status.json", status)
     metrics_file.close()
     checkpoint = torch.load(run_dir / "best.pt", map_location=device); model.load_state_dict(checkpoint["state"])
+    best_val_metrics = {key: value for key, value in best_val_metrics.items() if key != "confusion_matrix"}
     if cfg.get("binary_protocol"):
         result = {
             "best_epoch": checkpoint["epoch"],
             "best_validation_accuracy": best,
+            **{f"best_validation_{key}": value for key, value in best_val_metrics.items()},
             "protocol": "train_validation_only",
             "split_file": str(split_path),
         }
     else:
         test_metrics = evaluate(model, test_loader, device, cfg["num_classes"], loss_fn)
         selection_name = "best_test_accuracy" if cfg.get("selection_protocol") == "test_per_epoch" else "best_validation_accuracy"
-        result = {"best_epoch": checkpoint["epoch"], selection_name: best, **{f"test_{key}": value for key, value in test_metrics.items()}}
+        result = {
+            "best_epoch": checkpoint["epoch"],
+            selection_name: best,
+            **{f"best_validation_{key}": value for key, value in best_val_metrics.items()},
+            **{f"test_{key}": value for key, value in test_metrics.items()},
+        }
     if (
         getattr(model, "feature_quantum_adapter", False)
         or getattr(model, "class_logit_residual", False)
@@ -455,6 +488,25 @@ def main():
     status["status"] = "completed"
     status["completed_at"] = datetime.now().astimezone().isoformat()
     write_json(run_dir / "status.json", status)
+    def report_line(title, metrics):
+        auc_value = metrics.get("auc")
+        auc_text = "NA" if auc_value is None else f"{auc_value * 100:.2f}%"
+        return (
+            f"{title}: Accuracy={metrics['accuracy'] * 100:.2f}% "
+            f"Precision={metrics['macro_precision'] * 100:.2f}% "
+            f"Recall={metrics['macro_recall'] * 100:.2f}% "
+            f"Specificity={metrics['macro_specificity'] * 100:.2f}% "
+            f"F1={metrics['macro_f1'] * 100:.2f}% AUC={auc_text}"
+        )
+    logger("=" * 96)
+    logger(f"BEST VALIDATION | Epoch={checkpoint['epoch']}")
+    logger(report_line("  Metrics", best_val_metrics))
+    if not cfg.get("binary_protocol"):
+        logger("FINAL TEST")
+        logger(report_line("  Metrics", test_metrics))
+    else:
+        logger("Protocol=train_validation_only (no independent test set)")
+    logger("=" * 96)
     logger(json.dumps(result, indent=2))
     logger.close()
 
