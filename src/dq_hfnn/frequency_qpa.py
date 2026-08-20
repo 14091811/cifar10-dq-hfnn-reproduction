@@ -39,6 +39,29 @@ def haar_idwt2(ll, lh, hl, hh):
     return output
 
 
+def apply_2d_rope(tokens, height, width):
+    """Apply fixed 2D RoPE: first half encodes rows, second half columns."""
+    batch, token_count, dimension = tokens.shape
+    if token_count != height * width or dimension % 4:
+        raise ValueError("2D RoPE requires a token grid and a dimension divisible by four")
+    half = dimension // 2
+    pair_count = half // 2
+    inv_frequency = 1.0 / (10000 ** (
+        torch.arange(pair_count, device=tokens.device, dtype=tokens.dtype) / pair_count
+    ))
+    rows = torch.arange(height, device=tokens.device, dtype=tokens.dtype).repeat_interleave(width)
+    columns = torch.arange(width, device=tokens.device, dtype=tokens.dtype).repeat(height)
+
+    def rotate(values, positions):
+        values = values.reshape(batch, token_count, pair_count, 2)
+        angles = positions[:, None] * inv_frequency[None, :]
+        cosine, sine = angles.cos()[None], angles.sin()[None]
+        first, second = values.unbind(dim=-1)
+        return torch.stack((first * cosine - second * sine, first * sine + second * cosine), dim=-1).flatten(2)
+
+    return torch.cat((rotate(tokens[..., :half], rows), rotate(tokens[..., half:], columns)), dim=-1)
+
+
 class ClassicalQPAScorer(nn.Module):
     """Five-parameter classical control with the QPSAN input variables."""
 
@@ -223,7 +246,7 @@ class DirectionalFrequencyQPAResidual(nn.Module):
 
     def __init__(self, channels=128, reduced_channels=64, relation_dim=16,
                  mode="torchquantum", entangled=True, alpha_max=0.10,
-                 alpha_init=0.02, partial_value=False):
+                 alpha_init=0.02, partial_value=False, rope_2d=False):
         super().__init__()
         if relation_dim <= 0 or relation_dim > reduced_channels:
             raise ValueError("relation_dim must be in [1, reduced_channels]")
@@ -231,10 +254,13 @@ class DirectionalFrequencyQPAResidual(nn.Module):
             raise ValueError("alpha_init must be between zero and alpha_max")
         if mode not in {"classical", "torchquantum"}:
             raise ValueError(f"Unsupported directional QPA mode: {mode}")
+        if rope_2d and relation_dim % 4:
+            raise ValueError("2D RoPE requires relation_dim divisible by four")
         self.channels = channels
         self.reduced_channels = reduced_channels
         self.relation_dim = relation_dim
         self.partial_value = partial_value
+        self.rope_2d = rope_2d
         self.mode = mode
         self.reduce = nn.Conv2d(channels, reduced_channels, 1, bias=False)
         self.high_gate = nn.Sequential(
@@ -274,12 +300,16 @@ class DirectionalFrequencyQPAResidual(nn.Module):
         block_gate = F.avg_pool2d(self.high_gate(torch.cat((lh, hl), dim=1)), 2)
         q, k, v = self.qkv(ll).chunk(3, dim=1)
         q, k, v = (F.avg_pool2d(tensor, 2) for tensor in (q, k, v))
-        tokens = q.shape[-2] * q.shape[-1]
+        token_height, token_width = q.shape[-2:]
+        tokens = token_height * token_width
         q = q.flatten(2).transpose(1, 2)
         k = k.flatten(2).transpose(1, 2)
         v = v.flatten(2).transpose(1, 2)
         q_active = q[..., :self.relation_dim]
         k_active = k[..., :self.relation_dim]
+        if self.rope_2d:
+            q_active = apply_2d_rope(q_active, token_height, token_width)
+            k_active = apply_2d_rope(k_active, token_height, token_width)
         pair_scores = self.scorer(
             q_active.unsqueeze(2), k_active.unsqueeze(1)
         ).mean(dim=-1)
