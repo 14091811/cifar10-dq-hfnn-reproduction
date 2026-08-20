@@ -254,7 +254,8 @@ class DirectionalFrequencyQPAResidual(nn.Module):
     def __init__(self, channels=128, reduced_channels=64, relation_dim=16,
                  mode="torchquantum", entangled=True, alpha_max=0.10,
                  alpha_init=0.02, partial_value=False, rope_2d=False,
-                 bucketed_relative_position_bias=False):
+                 bucketed_relative_position_bias=False, grouped_relation=False,
+                 group_size=4):
         super().__init__()
         if relation_dim <= 0 or relation_dim > reduced_channels:
             raise ValueError("relation_dim must be in [1, reduced_channels]")
@@ -264,12 +265,16 @@ class DirectionalFrequencyQPAResidual(nn.Module):
             raise ValueError(f"Unsupported directional QPA mode: {mode}")
         if rope_2d and relation_dim % 4:
             raise ValueError("2D RoPE requires relation_dim divisible by four")
+        if grouped_relation and (relation_dim % group_size):
+            raise ValueError("grouped relation_dim must be divisible by group_size")
         self.channels = channels
         self.reduced_channels = reduced_channels
         self.relation_dim = relation_dim
         self.partial_value = partial_value
         self.rope_2d = rope_2d
         self.bucketed_relative_position_bias = bucketed_relative_position_bias
+        self.grouped_relation = grouped_relation
+        self.group_size = group_size
         self.mode = mode
         self.reduce = nn.Conv2d(channels, reduced_channels, 1, bias=False)
         self.high_gate = nn.Sequential(
@@ -285,6 +290,12 @@ class DirectionalFrequencyQPAResidual(nn.Module):
             ClassicalQPAScorer() if mode == "classical"
             else TorchQuantumQPAScorer(entangled=entangled)
         )
+        if grouped_relation:
+            group_count = relation_dim // group_size
+            self.group_q_projection = nn.Linear(group_size, 1, bias=False)
+            self.group_k_projection = nn.Linear(group_size, 1, bias=False)
+            nn.init.normal_(self.group_q_projection.weight, mean=0.0, std=0.02)
+            nn.init.normal_(self.group_k_projection.weight, mean=0.0, std=0.02)
         self.expand = nn.Conv2d(reduced_channels, channels, 1, bias=False)
         self.alpha_max = alpha_max
         self.alpha_logit = nn.Parameter(
@@ -325,6 +336,13 @@ class DirectionalFrequencyQPAResidual(nn.Module):
         v = v.flatten(2).transpose(1, 2)
         q_active = q[..., :self.relation_dim]
         k_active = k[..., :self.relation_dim]
+        if self.grouped_relation:
+            batch_size, token_count, _ = q_active.shape
+            group_count = self.relation_dim // self.group_size
+            q_groups = q_active.reshape(batch_size, token_count, group_count, self.group_size)
+            k_groups = k_active.reshape(batch_size, token_count, group_count, self.group_size)
+            q_active = self.group_q_projection(q_groups).squeeze(-1)
+            k_active = self.group_k_projection(k_groups).squeeze(-1)
         if self.rope_2d:
             q_active = apply_2d_rope(q_active, token_height, token_width)
             k_active = apply_2d_rope(k_active, token_height, token_width)
