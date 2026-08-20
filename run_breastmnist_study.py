@@ -1,4 +1,4 @@
-"""Run the BreastMNIST bucketed-position single-head D16 comparison."""
+"""Run the BreastMNIST single-head D24 comparison."""
 
 import argparse
 import json
@@ -10,8 +10,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 CONFIG = ROOT / "configs" / "breastmnist_paper_protocol.json"
 MODELS = (
-    "two_block_dwt_directional_classical_bucket_d16_cnn",
-    "two_block_dwt_directional_qpa_bucket_d16_cnn",
+    "two_block_dwt_directional_classical_d24_cnn",
+    "two_block_dwt_directional_qpa_d24_cnn",
 )
 
 
