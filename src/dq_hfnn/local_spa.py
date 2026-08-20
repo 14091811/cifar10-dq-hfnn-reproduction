@@ -317,6 +317,16 @@ class TwoBlockDirectionalDWTQuantumD24CNN(TwoBlockDirectionalDWTQPACNN):
         super().__init__(num_classes=num_classes, hidden_dim=hidden_dim, mode="torchquantum", relation_dim=24)
 
 
+class TwoBlockDirectionalDWTClassicalD64CNN(TwoBlockDirectionalDWTQPACNN):
+    def __init__(self, num_classes=2, hidden_dim=128):
+        super().__init__(num_classes=num_classes, hidden_dim=hidden_dim, mode="classical", relation_dim=64)
+
+
+class TwoBlockDirectionalDWTQuantumD64CNN(TwoBlockDirectionalDWTQPACNN):
+    def __init__(self, num_classes=2, hidden_dim=128):
+        super().__init__(num_classes=num_classes, hidden_dim=hidden_dim, mode="torchquantum", relation_dim=64)
+
+
 class TwoBlockDirectionalDWTClassicalPartialD16CNN(TwoBlockDirectionalDWTQPACNN):
     def __init__(self, num_classes=2, hidden_dim=128):
         super().__init__(num_classes=num_classes, hidden_dim=hidden_dim, mode="classical",
