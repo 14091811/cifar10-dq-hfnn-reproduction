@@ -38,7 +38,7 @@ def main():
             cfg = json.loads(base_config_path.read_text(encoding="utf-8"))
             cfg["seed"] = seed
             cfg["model_type"] = model_type
-            cfg["run_name"] = f"breastmnist_{model_type}"
+            cfg["run_name"] = f"{cfg['dataset']}_{model_type}"
             generated_config_path = output / f"{model_type}_seed{seed}.json"
             generated_config_path.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
             print(f"starting model={model_type} seed={seed}", flush=True)
