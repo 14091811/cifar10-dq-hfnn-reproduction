@@ -6,7 +6,9 @@ import torch
 
 from src.dq_hfnn.local_spa import (
     DirectionalDWTClassicalCNN,
+    DirectionalDWTClassicalD8CNN,
     DirectionalDWTQuantumCNN,
+    DirectionalDWTQuantumD8CNN,
 )
 
 
@@ -19,6 +21,8 @@ def main():
     for name, model_class in (
         ("dwt_directional_classical_cnn", DirectionalDWTClassicalCNN),
         ("dwt_directional_qpa_cnn", DirectionalDWTQuantumCNN),
+        ("dwt_directional_classical_d8_cnn", DirectionalDWTClassicalD8CNN),
+        ("dwt_directional_qpa_d8_cnn", DirectionalDWTQuantumD8CNN),
     ):
         model = model_class().to(device).train()
         if device.type == "cuda":

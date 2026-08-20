@@ -124,14 +124,15 @@ class DirectionalDWTQPACNN(nn.Module):
 
     has_quantum_auxiliary = False
 
-    def __init__(self, num_classes=10, hidden_dim=256, mode="torchquantum"):
+    def __init__(self, num_classes=10, hidden_dim=256, mode="torchquantum",
+                 relation_dim=16):
         super().__init__()
         self.classical = ClassicalBranch(hidden_dim)
         self.classical.frequency_tap_index = 3
         self.classical.frequency_modulator = DirectionalFrequencyQPAResidual(
             channels=128,
             reduced_channels=64,
-            relation_dim=16,
+            relation_dim=relation_dim,
             mode=mode,
             entangled=mode == "torchquantum",
         )
@@ -151,3 +152,15 @@ class DirectionalDWTQuantumCNN(DirectionalDWTQPACNN):
     def __init__(self, num_classes=10, hidden_dim=256):
         super().__init__(num_classes=num_classes, hidden_dim=hidden_dim,
                          mode="torchquantum")
+
+
+class DirectionalDWTClassicalD8CNN(DirectionalDWTQPACNN):
+    def __init__(self, num_classes=10, hidden_dim=256):
+        super().__init__(num_classes=num_classes, hidden_dim=hidden_dim,
+                         mode="classical", relation_dim=8)
+
+
+class DirectionalDWTQuantumD8CNN(DirectionalDWTQPACNN):
+    def __init__(self, num_classes=10, hidden_dim=256):
+        super().__init__(num_classes=num_classes, hidden_dim=hidden_dim,
+                         mode="torchquantum", relation_dim=8)

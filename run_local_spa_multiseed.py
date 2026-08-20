@@ -16,6 +16,8 @@ MODELS = (
     "dwt_qpa_spa_cnn",
     "dwt_directional_classical_cnn",
     "dwt_directional_qpa_cnn",
+    "dwt_directional_classical_d8_cnn",
+    "dwt_directional_qpa_d8_cnn",
 )
 
 
