@@ -62,6 +62,13 @@ def apply_2d_rope(tokens, height, width):
     return torch.cat((rotate(tokens[..., :half], rows), rotate(tokens[..., half:], columns)), dim=-1)
 
 
+def relative_position_bucket(offsets):
+    """Map signed offsets to 0, +/-1, +/-2, and +/-3-or-farther buckets."""
+    magnitude = offsets.abs()
+    compact = torch.where(magnitude <= 2, magnitude, torch.full_like(magnitude, 3))
+    return torch.where(offsets == 0, torch.zeros_like(offsets), torch.where(offsets > 0, compact, 3 + compact)).long()
+
+
 class ClassicalQPAScorer(nn.Module):
     """Five-parameter classical control with the QPSAN input variables."""
 
@@ -246,7 +253,8 @@ class DirectionalFrequencyQPAResidual(nn.Module):
 
     def __init__(self, channels=128, reduced_channels=64, relation_dim=16,
                  mode="torchquantum", entangled=True, alpha_max=0.10,
-                 alpha_init=0.02, partial_value=False, rope_2d=False):
+                 alpha_init=0.02, partial_value=False, rope_2d=False,
+                 bucketed_relative_position_bias=False):
         super().__init__()
         if relation_dim <= 0 or relation_dim > reduced_channels:
             raise ValueError("relation_dim must be in [1, reduced_channels]")
@@ -261,6 +269,7 @@ class DirectionalFrequencyQPAResidual(nn.Module):
         self.relation_dim = relation_dim
         self.partial_value = partial_value
         self.rope_2d = rope_2d
+        self.bucketed_relative_position_bias = bucketed_relative_position_bias
         self.mode = mode
         self.reduce = nn.Conv2d(channels, reduced_channels, 1, bias=False)
         self.high_gate = nn.Sequential(
@@ -281,6 +290,15 @@ class DirectionalFrequencyQPAResidual(nn.Module):
         self.alpha_logit = nn.Parameter(
             torch.logit(torch.tensor(alpha_init / alpha_max))
         )
+        if bucketed_relative_position_bias:
+            coordinates = torch.stack(torch.meshgrid(
+                torch.arange(4), torch.arange(4), indexing="ij"
+            ), dim=-1).flatten(0, 1)
+            relative = coordinates[:, None] - coordinates[None, :]
+            self.register_buffer("relative_row_bucket", relative_position_bucket(relative[..., 0]))
+            self.register_buffer("relative_column_bucket", relative_position_bucket(relative[..., 1]))
+            # Starts exactly equivalent to position-free QPA.
+            self.relative_position_bias = nn.Parameter(torch.zeros(7, 7))
         for layer in (self.high_gate[0], self.high_gate[2], self.qkv,
                       self.output_projection, self.expand):
             nn.init.kaiming_uniform_(layer.weight, a=math.sqrt(5))
@@ -313,6 +331,12 @@ class DirectionalFrequencyQPAResidual(nn.Module):
         pair_scores = self.scorer(
             q_active.unsqueeze(2), k_active.unsqueeze(1)
         ).mean(dim=-1)
+        if self.bucketed_relative_position_bias:
+            if tokens != 16:
+                raise ValueError("Bucketed position bias is configured for the 4x4 token grid")
+            pair_scores = pair_scores + self.relative_position_bias[
+                self.relative_row_bucket, self.relative_column_bucket
+            ].unsqueeze(0)
         weights = pair_scores.softmax(dim=-1)
         if self.partial_value:
             # Partial attention: only active relation channels exchange
