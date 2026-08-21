@@ -262,7 +262,8 @@ class TwoBlockDirectionalDWTQPACNN(nn.Module):
     def __init__(self, num_classes=2, hidden_dim=128, mode=None, relation_dim=8,
                  partial_value=False, rope_2d=False, bucketed_relative_position_bias=False,
                  grouped_relation=False, group_size=4, learned_partial_selection=False,
-                 include_hh_in_gate=False, gate_value_before_attention=False):
+                 include_hh_in_gate=False, gate_value_before_attention=False,
+                 star_value_gate=False):
         super().__init__()
         if hidden_dim != 128:
             raise ValueError("TwoBlockDirectionalDWTQPACNN uses a fixed 128D GAP feature")
@@ -282,6 +283,7 @@ class TwoBlockDirectionalDWTQPACNN(nn.Module):
                 learned_partial_selection=learned_partial_selection,
                 include_hh_in_gate=include_hh_in_gate,
                 gate_value_before_attention=gate_value_before_attention,
+                star_value_gate=star_value_gate,
             )
         self.classifier = nn.Linear(128, num_classes)
 
@@ -338,6 +340,20 @@ class TwoBlockDirectionalDWTQuantumValueGateD16CNN(TwoBlockDirectionalDWTQPACNN)
         super().__init__(num_classes=num_classes, hidden_dim=hidden_dim,
                          mode="torchquantum", relation_dim=16,
                          gate_value_before_attention=True)
+
+
+class TwoBlockDirectionalDWTClassicalStarValueGateD16CNN(TwoBlockDirectionalDWTQPACNN):
+    def __init__(self, num_classes=2, hidden_dim=128):
+        super().__init__(num_classes=num_classes, hidden_dim=hidden_dim,
+                         mode="classical", relation_dim=16,
+                         gate_value_before_attention=True, star_value_gate=True)
+
+
+class TwoBlockDirectionalDWTQuantumStarValueGateD16CNN(TwoBlockDirectionalDWTQPACNN):
+    def __init__(self, num_classes=2, hidden_dim=128):
+        super().__init__(num_classes=num_classes, hidden_dim=hidden_dim,
+                         mode="torchquantum", relation_dim=16,
+                         gate_value_before_attention=True, star_value_gate=True)
 
 
 class TwoBlockDirectionalDWTClassicalD24CNN(TwoBlockDirectionalDWTQPACNN):

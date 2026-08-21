@@ -216,6 +216,28 @@ class DirectionalHighBandRefinement(nn.Module):
         return lh + self.scale * lh_c, hl + self.scale * hl_c, hh + self.scale * hh_c
 
 
+class StarHighFrequencyGate(nn.Module):
+    """Star-style LH/HL gate with multiplicative feature interaction."""
+
+    def __init__(self, channels):
+        super().__init__()
+        input_channels = channels * 2
+        self.local = nn.Conv2d(
+            input_channels, input_channels, 3, padding=1,
+            groups=input_channels, bias=False,
+        )
+        self.branch_a = nn.Conv2d(input_channels, channels, 1, bias=False)
+        self.branch_b = nn.Conv2d(input_channels, channels, 1, bias=False)
+        self.output = nn.Conv2d(channels, channels, 1, bias=False)
+        self.activation = nn.ReLU6(inplace=True)
+        self.gate = nn.Sigmoid()
+
+    def forward(self, high):
+        local = self.local(high)
+        interaction = self.branch_a(local) * self.activation(self.branch_b(local))
+        return self.gate(self.output(interaction))
+
+
 class FrequencyQPAResidual(nn.Module):
     """DWT -> frequency-conditioned QPA -> IDWT residual for a 128x16x16 tap."""
 
@@ -256,7 +278,8 @@ class DirectionalFrequencyQPAResidual(nn.Module):
                  alpha_init=0.02, partial_value=False, rope_2d=False,
                  bucketed_relative_position_bias=False, grouped_relation=False,
                  group_size=4, learned_partial_selection=False,
-                 include_hh_in_gate=False, gate_value_before_attention=False):
+                 include_hh_in_gate=False, gate_value_before_attention=False,
+                 star_value_gate=False):
         super().__init__()
         if relation_dim <= 0 or relation_dim > reduced_channels:
             raise ValueError("relation_dim must be in [1, reduced_channels]")
@@ -275,6 +298,7 @@ class DirectionalFrequencyQPAResidual(nn.Module):
         self.learned_partial_selection = learned_partial_selection
         self.include_hh_in_gate = include_hh_in_gate
         self.gate_value_before_attention = gate_value_before_attention
+        self.star_value_gate = star_value_gate
         self.rope_2d = rope_2d
         self.bucketed_relative_position_bias = bucketed_relative_position_bias
         self.grouped_relation = grouped_relation
@@ -282,13 +306,18 @@ class DirectionalFrequencyQPAResidual(nn.Module):
         self.mode = mode
         self.reduce = nn.Conv2d(channels, reduced_channels, 1, bias=False)
         high_gate_input_channels = reduced_channels * (3 if include_hh_in_gate else 2)
-        self.high_gate = nn.Sequential(
-            nn.Conv2d(high_gate_input_channels, high_gate_input_channels, 3,
-                      padding=1, groups=high_gate_input_channels, bias=False),
-            nn.GELU(),
-            nn.Conv2d(high_gate_input_channels, reduced_channels, 1, bias=False),
-            nn.Sigmoid(),
-        )
+        if star_value_gate:
+            if include_hh_in_gate:
+                raise ValueError("Star value gate screening currently uses LH/HL only")
+            self.high_gate = StarHighFrequencyGate(reduced_channels)
+        else:
+            self.high_gate = nn.Sequential(
+                nn.Conv2d(high_gate_input_channels, high_gate_input_channels, 3,
+                          padding=1, groups=high_gate_input_channels, bias=False),
+                nn.GELU(),
+                nn.Conv2d(high_gate_input_channels, reduced_channels, 1, bias=False),
+                nn.Sigmoid(),
+            )
         self.qkv = nn.Conv2d(reduced_channels, reduced_channels * 3, 1, bias=False)
         self.output_projection = nn.Conv2d(reduced_channels, reduced_channels, 1, bias=False)
         self.scorer = (
@@ -326,8 +355,10 @@ class DirectionalFrequencyQPAResidual(nn.Module):
             self.register_buffer("relative_column_bucket", relative_position_bucket(relative[..., 1]))
             # Starts exactly equivalent to position-free QPA.
             self.relative_position_bias = nn.Parameter(torch.zeros(7, 7))
-        for layer in (self.high_gate[0], self.high_gate[2], self.qkv,
-                      self.output_projection, self.expand):
+        for layer in self.high_gate.modules():
+            if isinstance(layer, nn.Conv2d):
+                nn.init.kaiming_uniform_(layer.weight, a=math.sqrt(5))
+        for layer in (self.qkv, self.output_projection, self.expand):
             nn.init.kaiming_uniform_(layer.weight, a=math.sqrt(5))
         # Start as a nearly identity path while retaining gradients in QPA.
         nn.init.zeros_(self.output_projection.weight)

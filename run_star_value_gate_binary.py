@@ -1,4 +1,4 @@
-"""Screen DWA-style pre-attention value gating on two binary datasets."""
+"""Screen Star-style LH/HL pre-attention value gating on two binary datasets."""
 
 import argparse
 import json
@@ -14,8 +14,8 @@ DATASETS = {
     "pneumoniamnist": ROOT / "configs" / "pneumoniamnist_2x2_fixed50.json",
 }
 MODELS = (
-    "two_block_dwt_directional_classical_value_gate_d16_cnn",
-    "two_block_dwt_directional_qpa_value_gate_d16_cnn",
+    "two_block_dwt_directional_classical_star_value_gate_d16_cnn",
+    "two_block_dwt_directional_qpa_star_value_gate_d16_cnn",
 )
 
 
@@ -38,7 +38,7 @@ def main():
         if dataset not in DATASETS:
             raise ValueError(f"unsupported dataset: {dataset}")
         base_config = json.loads(DATASETS[dataset].read_text(encoding="utf-8"))
-        output_dir = ROOT / "configs" / f"generated_{dataset}_value_gate"
+        output_dir = ROOT / "configs" / f"generated_{dataset}_star_value_gate"
         output_dir.mkdir(parents=True, exist_ok=True)
         print(f"dataset={dataset} seeds={seeds}", flush=True)
         for seed in seeds:
@@ -56,7 +56,7 @@ def main():
                     cwd=ROOT,
                     check=True,
                 )
-    print("LH/HL value gate binary study complete", flush=True)
+    print("Star LH/HL value gate binary study complete", flush=True)
 
 
 if __name__ == "__main__":
