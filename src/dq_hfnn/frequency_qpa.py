@@ -238,6 +238,23 @@ class StarHighFrequencyGate(nn.Module):
         return self.gate(self.output(interaction))
 
 
+class StandardHighFrequencyGate(nn.Module):
+    """LH/HL gate using a standard convolution for cross-channel mixing."""
+
+    def __init__(self, channels):
+        super().__init__()
+        input_channels = channels * 2
+        self.features = nn.Sequential(
+            nn.Conv2d(input_channels, input_channels, 3, padding=1, bias=False),
+            nn.GELU(),
+            nn.Conv2d(input_channels, channels, 1, bias=False),
+            nn.Sigmoid(),
+        )
+
+    def forward(self, high):
+        return self.features(high)
+
+
 class FrequencyQPAResidual(nn.Module):
     """DWT -> frequency-conditioned QPA -> IDWT residual for a 128x16x16 tap."""
 
@@ -279,7 +296,7 @@ class DirectionalFrequencyQPAResidual(nn.Module):
                  bucketed_relative_position_bias=False, grouped_relation=False,
                  group_size=4, learned_partial_selection=False,
                  include_hh_in_gate=False, gate_value_before_attention=False,
-                 star_value_gate=False):
+                 star_value_gate=False, standard_value_gate=False):
         super().__init__()
         if relation_dim <= 0 or relation_dim > reduced_channels:
             raise ValueError("relation_dim must be in [1, reduced_channels]")
@@ -299,6 +316,7 @@ class DirectionalFrequencyQPAResidual(nn.Module):
         self.include_hh_in_gate = include_hh_in_gate
         self.gate_value_before_attention = gate_value_before_attention
         self.star_value_gate = star_value_gate
+        self.standard_value_gate = standard_value_gate
         self.rope_2d = rope_2d
         self.bucketed_relative_position_bias = bucketed_relative_position_bias
         self.grouped_relation = grouped_relation
@@ -306,10 +324,16 @@ class DirectionalFrequencyQPAResidual(nn.Module):
         self.mode = mode
         self.reduce = nn.Conv2d(channels, reduced_channels, 1, bias=False)
         high_gate_input_channels = reduced_channels * (3 if include_hh_in_gate else 2)
+        if star_value_gate and standard_value_gate:
+            raise ValueError("star_value_gate and standard_value_gate are mutually exclusive")
         if star_value_gate:
             if include_hh_in_gate:
                 raise ValueError("Star value gate screening currently uses LH/HL only")
             self.high_gate = StarHighFrequencyGate(reduced_channels)
+        elif standard_value_gate:
+            if include_hh_in_gate:
+                raise ValueError("Standard value gate screening currently uses LH/HL only")
+            self.high_gate = StandardHighFrequencyGate(reduced_channels)
         else:
             self.high_gate = nn.Sequential(
                 nn.Conv2d(high_gate_input_channels, high_gate_input_channels, 3,
