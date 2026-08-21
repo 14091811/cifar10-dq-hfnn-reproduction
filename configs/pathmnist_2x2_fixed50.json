@@ -1,0 +1,15 @@
+{
+  "run_name": "pathmnist_2x2_fixed50",
+  "dataset": "pathmnist",
+  "data_root": "medmnist_data",
+  "model_type": "two_block_classical_cnn",
+  "num_classes": 9,
+  "hidden_dim": 128,
+  "seed": 42,
+  "epochs": 50,
+  "early_stopping_patience": 999,
+  "batch_size": 32,
+  "num_workers": 4,
+  "learning_rate": 0.001,
+  "weight_decay": 0.0001
+}
