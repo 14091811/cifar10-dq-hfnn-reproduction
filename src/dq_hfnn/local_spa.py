@@ -371,6 +371,82 @@ class TwoBlockDirectionalDWTQuantumStandardValueGateD16CNN(TwoBlockDirectionalDW
                          gate_value_before_attention=True, standard_value_gate=True)
 
 
+class TwoBlockDirectionalDWTClassicalLearnedPartialD8CNN(TwoBlockDirectionalDWTQPACNN):
+    def __init__(self, num_classes=2, hidden_dim=128):
+        super().__init__(num_classes=num_classes, hidden_dim=hidden_dim,
+                         mode="classical", relation_dim=8, partial_value=True,
+                         learned_partial_selection=True, gate_value_before_attention=True)
+
+
+class TwoBlockDirectionalDWTQuantumLearnedPartialD8CNN(TwoBlockDirectionalDWTQPACNN):
+    def __init__(self, num_classes=2, hidden_dim=128):
+        super().__init__(num_classes=num_classes, hidden_dim=hidden_dim,
+                         mode="torchquantum", relation_dim=8, partial_value=True,
+                         learned_partial_selection=True, gate_value_before_attention=True)
+
+
+class TwoBlockDirectionalDWTClassicalLearnedPartialD32CNN(TwoBlockDirectionalDWTQPACNN):
+    def __init__(self, num_classes=2, hidden_dim=128):
+        super().__init__(num_classes=num_classes, hidden_dim=hidden_dim,
+                         mode="classical", relation_dim=32, partial_value=True,
+                         learned_partial_selection=True, gate_value_before_attention=True)
+
+
+class TwoBlockDirectionalDWTQuantumLearnedPartialD32CNN(TwoBlockDirectionalDWTQPACNN):
+    def __init__(self, num_classes=2, hidden_dim=128):
+        super().__init__(num_classes=num_classes, hidden_dim=hidden_dim,
+                         mode="torchquantum", relation_dim=32, partial_value=True,
+                         learned_partial_selection=True, gate_value_before_attention=True)
+
+
+class TwoBlockDirectionalDWTClassicalStandardLearnedPartialD8CNN(TwoBlockDirectionalDWTQPACNN):
+    def __init__(self, num_classes=2, hidden_dim=128):
+        super().__init__(num_classes=num_classes, hidden_dim=hidden_dim,
+                         mode="classical", relation_dim=8, partial_value=True,
+                         learned_partial_selection=True, gate_value_before_attention=True,
+                         standard_value_gate=True)
+
+
+class TwoBlockDirectionalDWTQuantumStandardLearnedPartialD8CNN(TwoBlockDirectionalDWTQPACNN):
+    def __init__(self, num_classes=2, hidden_dim=128):
+        super().__init__(num_classes=num_classes, hidden_dim=hidden_dim,
+                         mode="torchquantum", relation_dim=8, partial_value=True,
+                         learned_partial_selection=True, gate_value_before_attention=True,
+                         standard_value_gate=True)
+
+
+class TwoBlockDirectionalDWTClassicalStandardLearnedPartialD16CNN(TwoBlockDirectionalDWTQPACNN):
+    def __init__(self, num_classes=2, hidden_dim=128):
+        super().__init__(num_classes=num_classes, hidden_dim=hidden_dim,
+                         mode="classical", relation_dim=16, partial_value=True,
+                         learned_partial_selection=True, gate_value_before_attention=True,
+                         standard_value_gate=True)
+
+
+class TwoBlockDirectionalDWTQuantumStandardLearnedPartialD16CNN(TwoBlockDirectionalDWTQPACNN):
+    def __init__(self, num_classes=2, hidden_dim=128):
+        super().__init__(num_classes=num_classes, hidden_dim=hidden_dim,
+                         mode="torchquantum", relation_dim=16, partial_value=True,
+                         learned_partial_selection=True, gate_value_before_attention=True,
+                         standard_value_gate=True)
+
+
+class TwoBlockDirectionalDWTClassicalStandardLearnedPartialD32CNN(TwoBlockDirectionalDWTQPACNN):
+    def __init__(self, num_classes=2, hidden_dim=128):
+        super().__init__(num_classes=num_classes, hidden_dim=hidden_dim,
+                         mode="classical", relation_dim=32, partial_value=True,
+                         learned_partial_selection=True, gate_value_before_attention=True,
+                         standard_value_gate=True)
+
+
+class TwoBlockDirectionalDWTQuantumStandardLearnedPartialD32CNN(TwoBlockDirectionalDWTQPACNN):
+    def __init__(self, num_classes=2, hidden_dim=128):
+        super().__init__(num_classes=num_classes, hidden_dim=hidden_dim,
+                         mode="torchquantum", relation_dim=32, partial_value=True,
+                         learned_partial_selection=True, gate_value_before_attention=True,
+                         standard_value_gate=True)
+
+
 class TwoBlockDirectionalDWTClassicalD24CNN(TwoBlockDirectionalDWTQPACNN):
     def __init__(self, num_classes=2, hidden_dim=128):
         super().__init__(num_classes=num_classes, hidden_dim=hidden_dim, mode="classical", relation_dim=24)

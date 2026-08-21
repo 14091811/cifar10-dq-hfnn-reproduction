@@ -349,13 +349,12 @@ class DirectionalFrequencyQPAResidual(nn.Module):
             else TorchQuantumQPAScorer(entangled=entangled)
         )
         if learned_partial_selection:
-            if not partial_value or relation_dim != 16 or reduced_channels != 64:
+            if not partial_value or reduced_channels != 64:
                 raise ValueError(
-                    "learned partial selection currently requires partial_value=True, "
-                    "relation_dim=16, and reduced_channels=64"
+                    "learned partial selection currently requires partial_value=True "
+                    "and reduced_channels=64"
                 )
             # Each row softly selects one active relation dimension from the 64D Q/K/V.
-            # The diagonal initialization preserves the original fixed-first-16 control.
             self.partial_selector_logits = nn.Parameter(torch.full((relation_dim, reduced_channels), -4.0))
             with torch.no_grad():
                 self.partial_selector_logits.diagonal().fill_(4.0)
