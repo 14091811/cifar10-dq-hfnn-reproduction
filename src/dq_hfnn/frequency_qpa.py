@@ -255,7 +255,8 @@ class DirectionalFrequencyQPAResidual(nn.Module):
                  mode="torchquantum", entangled=True, alpha_max=0.10,
                  alpha_init=0.02, partial_value=False, rope_2d=False,
                  bucketed_relative_position_bias=False, grouped_relation=False,
-                 group_size=4, learned_partial_selection=False):
+                 group_size=4, learned_partial_selection=False,
+                 include_hh_in_gate=False):
         super().__init__()
         if relation_dim <= 0 or relation_dim > reduced_channels:
             raise ValueError("relation_dim must be in [1, reduced_channels]")
@@ -272,17 +273,19 @@ class DirectionalFrequencyQPAResidual(nn.Module):
         self.relation_dim = relation_dim
         self.partial_value = partial_value
         self.learned_partial_selection = learned_partial_selection
+        self.include_hh_in_gate = include_hh_in_gate
         self.rope_2d = rope_2d
         self.bucketed_relative_position_bias = bucketed_relative_position_bias
         self.grouped_relation = grouped_relation
         self.group_size = group_size
         self.mode = mode
         self.reduce = nn.Conv2d(channels, reduced_channels, 1, bias=False)
+        high_gate_input_channels = reduced_channels * (3 if include_hh_in_gate else 2)
         self.high_gate = nn.Sequential(
-            nn.Conv2d(reduced_channels * 2, reduced_channels * 2, 3,
-                      padding=1, groups=reduced_channels * 2, bias=False),
+            nn.Conv2d(high_gate_input_channels, high_gate_input_channels, 3,
+                      padding=1, groups=high_gate_input_channels, bias=False),
             nn.GELU(),
-            nn.Conv2d(reduced_channels * 2, reduced_channels, 1, bias=False),
+            nn.Conv2d(high_gate_input_channels, reduced_channels, 1, bias=False),
             nn.Sigmoid(),
         )
         self.qkv = nn.Conv2d(reduced_channels, reduced_channels * 3, 1, bias=False)
@@ -336,9 +339,8 @@ class DirectionalFrequencyQPAResidual(nn.Module):
         reduced = self.reduce(x)
         ll, lh, hl, hh = haar_dwt2(reduced)
         batch, _, height, width = lh.shape
-        # DWA uses directional LH/HL evidence as a reliability gate. HH is
-        # intentionally absent here and is only retained for reconstruction.
-        block_gate = F.avg_pool2d(self.high_gate(torch.cat((lh, hl), dim=1)), 2)
+        high_inputs = (lh, hl, hh) if self.include_hh_in_gate else (lh, hl)
+        block_gate = F.avg_pool2d(self.high_gate(torch.cat(high_inputs, dim=1)), 2)
         q, k, v = self.qkv(ll).chunk(3, dim=1)
         q, k, v = (F.avg_pool2d(tensor, 2) for tensor in (q, k, v))
         token_height, token_width = q.shape[-2:]
