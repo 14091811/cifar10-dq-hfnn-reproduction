@@ -47,6 +47,7 @@ def main():
                 cfg["seed"] = seed
                 cfg["model_type"] = model_type
                 cfg["run_name"] = f"{dataset}_{model_type}"
+                cfg["early_stopping_patience"] = 999
                 generated = output_dir / f"{model_type}_seed{seed}.json"
                 generated.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
                 print(f"starting model={model_type} seed={seed}", flush=True)
