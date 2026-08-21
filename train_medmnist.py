@@ -10,7 +10,6 @@ from pathlib import Path
 
 import numpy as np
 import torch
-from sklearn.metrics import roc_auc_score
 from torch.utils.data import DataLoader
 from torchvision import transforms
 
@@ -95,7 +94,7 @@ def load_dataset_class(name):
     return getattr(medmnist, INFO[name]["python_class"])
 
 
-def evaluate(model, loader, device, num_classes, loss_fn):
+def evaluate(model, loader, device, num_classes, loss_fn, official_evaluator):
     model.eval()
     confusion = torch.zeros(num_classes, num_classes, dtype=torch.long)
     loss_sum = 0.0
@@ -124,22 +123,15 @@ def evaluate(model, loader, device, num_classes, loss_fn):
     ) / (total - confusion.sum(dim=1).float()).clamp_min(1)
     labels_np = torch.cat(all_labels).numpy()
     probabilities_np = torch.cat(all_probabilities).numpy()
-    try:
-        auc = float(
-            roc_auc_score(labels_np, probabilities_np[:, 1])
-            if num_classes == 2
-            else roc_auc_score(labels_np, probabilities_np, multi_class="ovr", average="macro")
-        )
-    except ValueError:
-        auc = None
+    official_metrics = official_evaluator.evaluate(probabilities_np)
     return {
         "loss": loss_sum / total.item(),
-        "accuracy": (true_positive.sum() / total).item(),
+        "accuracy": float(official_metrics.ACC),
         "macro_precision": precision.mean().item(),
         "macro_recall": recall.mean().item(),
         "macro_specificity": specificity.mean().item(),
         "macro_f1": f1.mean().item(),
-        "auc": auc,
+        "auc": float(official_metrics.AUC),
         "confusion_matrix": confusion.tolist(),
     }
 
@@ -147,6 +139,7 @@ def evaluate(model, loader, device, num_classes, loss_fn):
 def metric_line(metrics):
     auc = "NA" if metrics["auc"] is None else f"{metrics['auc'] * 100:.2f}%"
     return (
+        f"Loss={metrics['loss']:.4f} "
         f"Accuracy={metrics['accuracy'] * 100:.2f}% "
         f"Precision={metrics['macro_precision'] * 100:.2f}% "
         f"Recall={metrics['macro_recall'] * 100:.2f}% "
@@ -192,6 +185,10 @@ def main():
     train_set = dataset_class(split="train", root=str(root), transform=train_transform, download=False)
     val_set = dataset_class(split="val", root=str(root), transform=eval_transform, download=False)
     test_set = dataset_class(split="test", root=str(root), transform=eval_transform, download=False)
+    from medmnist.evaluator import Evaluator
+
+    val_evaluator = Evaluator(cfg["dataset"], split="val", root=str(root))
+    test_evaluator = Evaluator(cfg["dataset"], split="test", root=str(root))
     num_classes = int(cfg["num_classes"])
     loader_args = dict(batch_size=cfg["batch_size"], num_workers=cfg["num_workers"], pin_memory=device.type == "cuda")
     train_loader = DataLoader(train_set, shuffle=True, generator=torch.Generator().manual_seed(cfg["seed"]), **loader_args)
@@ -223,7 +220,9 @@ def main():
             loss_sum += loss.item() * labels.numel()
             correct += (logits.argmax(1) == labels).sum().item()
             total += labels.numel()
-        val_metrics = evaluate(model, val_loader, device, num_classes, loss_fn)
+        val_metrics = evaluate(
+            model, val_loader, device, num_classes, loss_fn, val_evaluator
+        )
         record = {
             "epoch": epoch,
             "train_loss": loss_sum / total,
@@ -251,7 +250,9 @@ def main():
 
     checkpoint = torch.load(run_dir / "best.pt", map_location=device)
     model.load_state_dict(checkpoint["state"])
-    test_metrics = evaluate(model, test_loader, device, num_classes, loss_fn)
+    test_metrics = evaluate(
+        model, test_loader, device, num_classes, loss_fn, test_evaluator
+    )
     best_metrics.pop("confusion_matrix")
     result = {
         "protocol": "official_medmnist_train_val_test",
