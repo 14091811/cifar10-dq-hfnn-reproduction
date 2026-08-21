@@ -88,19 +88,26 @@ class ClassicalQPAScorer(nn.Module):
 class TorchQuantumQPAScorer(nn.Module):
     """Two-qubit QPSAN similarity: probability of the even-parity states."""
 
-    def __init__(self, entangled=True, pair_chunk=None):
+    def __init__(self, entangled=True, pair_chunk=None, circuit_variant="baseline"):
         super().__init__()
+        if circuit_variant not in {"baseline", "no_entanglement", "rz_entangled"}:
+            raise ValueError(f"Unsupported circuit variant: {circuit_variant}")
         self.entangled = entangled
+        self.circuit_variant = circuit_variant
         self.pair_chunk = pair_chunk
         self.input_scale = nn.Parameter(torch.tensor(0.5))
         self.diff_scale = nn.Parameter(torch.empty(()))
         self.sum_scale = nn.Parameter(torch.empty(()))
         self.ent_scale = nn.Parameter(torch.empty(()))
         self.mixer_angle = nn.Parameter(torch.empty(()))
+        if circuit_variant == "rz_entangled":
+            self.rz_scale = nn.Parameter(torch.empty(()))
         nn.init.normal_(self.diff_scale, mean=0.0, std=0.12)
         nn.init.normal_(self.sum_scale, mean=0.0, std=0.12)
         nn.init.normal_(self.ent_scale, mean=0.0, std=0.12)
         nn.init.normal_(self.mixer_angle, mean=0.0, std=0.12)
+        if circuit_variant == "rz_entangled":
+            nn.init.normal_(self.rz_scale, mean=0.0, std=0.12)
         try:
             import torchquantum as tq
         except ImportError as error:
@@ -124,10 +131,14 @@ class TorchQuantumQPAScorer(nn.Module):
         second = math.pi / 4 + self.input_scale * k - self.diff_scale * (q - k) + self.sum_scale * (q + k)
         self.tq.functional.ry(qdev, wires=0, params=first)
         self.tq.functional.ry(qdev, wires=1, params=second)
-        if self.entangled:
+        use_entanglement = self.entangled and self.circuit_variant != "no_entanglement"
+        if self.circuit_variant == "rz_entangled":
+            self.tq.functional.rz(qdev, wires=0, params=self.rz_scale * q)
+            self.tq.functional.rz(qdev, wires=1, params=self.rz_scale * k)
+        if use_entanglement:
             self.tq.functional.cnot(qdev, wires=[0, 1])
         self.tq.functional.ry(qdev, wires=1, params=self.ent_scale * (q + k))
-        if self.entangled:
+        if use_entanglement:
             self.tq.functional.cnot(qdev, wires=[1, 0])
         self.tq.functional.rx(qdev, wires=0, params=2.0 * self.mixer_angle)
         self.tq.functional.rx(qdev, wires=1, params=2.0 * self.mixer_angle)
@@ -296,7 +307,8 @@ class DirectionalFrequencyQPAResidual(nn.Module):
                  bucketed_relative_position_bias=False, grouped_relation=False,
                  group_size=4, learned_partial_selection=False,
                  include_hh_in_gate=False, gate_value_before_attention=False,
-                 star_value_gate=False, standard_value_gate=False):
+                 star_value_gate=False, standard_value_gate=False,
+                 circuit_variant="baseline"):
         super().__init__()
         if relation_dim <= 0 or relation_dim > reduced_channels:
             raise ValueError("relation_dim must be in [1, reduced_channels]")
@@ -322,6 +334,7 @@ class DirectionalFrequencyQPAResidual(nn.Module):
         self.grouped_relation = grouped_relation
         self.group_size = group_size
         self.mode = mode
+        self.circuit_variant = circuit_variant
         self.reduce = nn.Conv2d(channels, reduced_channels, 1, bias=False)
         high_gate_input_channels = reduced_channels * (3 if include_hh_in_gate else 2)
         if star_value_gate and standard_value_gate:
@@ -346,7 +359,9 @@ class DirectionalFrequencyQPAResidual(nn.Module):
         self.output_projection = nn.Conv2d(reduced_channels, reduced_channels, 1, bias=False)
         self.scorer = (
             ClassicalQPAScorer() if mode == "classical"
-            else TorchQuantumQPAScorer(entangled=entangled)
+            else TorchQuantumQPAScorer(
+                entangled=entangled, circuit_variant=circuit_variant
+            )
         )
         if learned_partial_selection:
             if not partial_value or reduced_channels != 64:

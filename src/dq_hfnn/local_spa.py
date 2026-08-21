@@ -263,7 +263,8 @@ class TwoBlockDirectionalDWTQPACNN(nn.Module):
                  partial_value=False, rope_2d=False, bucketed_relative_position_bias=False,
                  grouped_relation=False, group_size=4, learned_partial_selection=False,
                  include_hh_in_gate=False, gate_value_before_attention=False,
-                 star_value_gate=False, standard_value_gate=False):
+                 star_value_gate=False, standard_value_gate=False,
+                 circuit_variant="baseline"):
         super().__init__()
         if hidden_dim != 128:
             raise ValueError("TwoBlockDirectionalDWTQPACNN uses a fixed 128D GAP feature")
@@ -285,6 +286,7 @@ class TwoBlockDirectionalDWTQPACNN(nn.Module):
                 gate_value_before_attention=gate_value_before_attention,
                 star_value_gate=star_value_gate,
                 standard_value_gate=standard_value_gate,
+                circuit_variant=circuit_variant,
             )
         self.classifier = nn.Linear(128, num_classes)
 
@@ -503,6 +505,30 @@ class TwoBlockDirectionalDWTQuantumLearnedPartialD16CNN(TwoBlockDirectionalDWTQP
         super().__init__(num_classes=num_classes, hidden_dim=hidden_dim, mode="torchquantum",
                          relation_dim=16, partial_value=True,
                          learned_partial_selection=True)
+
+
+class TwoBlockDirectionalDWTQuantumLearnedPartialD16BaselineCircuitCNN(TwoBlockDirectionalDWTQPACNN):
+    def __init__(self, num_classes=2, hidden_dim=128):
+        super().__init__(num_classes=num_classes, hidden_dim=hidden_dim,
+                         mode="torchquantum", relation_dim=16, partial_value=True,
+                         learned_partial_selection=True, gate_value_before_attention=True,
+                         circuit_variant="baseline")
+
+
+class TwoBlockDirectionalDWTQuantumLearnedPartialD16NoEntanglementCircuitCNN(TwoBlockDirectionalDWTQPACNN):
+    def __init__(self, num_classes=2, hidden_dim=128):
+        super().__init__(num_classes=num_classes, hidden_dim=hidden_dim,
+                         mode="torchquantum", relation_dim=16, partial_value=True,
+                         learned_partial_selection=True, gate_value_before_attention=True,
+                         circuit_variant="no_entanglement")
+
+
+class TwoBlockDirectionalDWTQuantumLearnedPartialD16RZCircuitCNN(TwoBlockDirectionalDWTQPACNN):
+    def __init__(self, num_classes=2, hidden_dim=128):
+        super().__init__(num_classes=num_classes, hidden_dim=hidden_dim,
+                         mode="torchquantum", relation_dim=16, partial_value=True,
+                         learned_partial_selection=True, gate_value_before_attention=True,
+                         circuit_variant="rz_entangled")
 
 
 class TwoBlockDirectionalDWTClassicalRoPED16CNN(TwoBlockDirectionalDWTQPACNN):
