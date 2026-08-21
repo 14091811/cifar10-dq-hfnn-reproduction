@@ -256,7 +256,7 @@ class DirectionalFrequencyQPAResidual(nn.Module):
                  alpha_init=0.02, partial_value=False, rope_2d=False,
                  bucketed_relative_position_bias=False, grouped_relation=False,
                  group_size=4, learned_partial_selection=False,
-                 include_hh_in_gate=False):
+                 include_hh_in_gate=False, gate_value_before_attention=False):
         super().__init__()
         if relation_dim <= 0 or relation_dim > reduced_channels:
             raise ValueError("relation_dim must be in [1, reduced_channels]")
@@ -274,6 +274,7 @@ class DirectionalFrequencyQPAResidual(nn.Module):
         self.partial_value = partial_value
         self.learned_partial_selection = learned_partial_selection
         self.include_hh_in_gate = include_hh_in_gate
+        self.gate_value_before_attention = gate_value_before_attention
         self.rope_2d = rope_2d
         self.bucketed_relative_position_bias = bucketed_relative_position_bias
         self.grouped_relation = grouped_relation
@@ -343,6 +344,9 @@ class DirectionalFrequencyQPAResidual(nn.Module):
         block_gate = F.avg_pool2d(self.high_gate(torch.cat(high_inputs, dim=1)), 2)
         q, k, v = self.qkv(ll).chunk(3, dim=1)
         q, k, v = (F.avg_pool2d(tensor, 2) for tensor in (q, k, v))
+        if self.gate_value_before_attention:
+            # DWA-style placement: gate V before token relation aggregation.
+            v = v * block_gate
         token_height, token_width = q.shape[-2:]
         tokens = token_height * token_width
         q = q.flatten(2).transpose(1, 2)
@@ -389,8 +393,11 @@ class DirectionalFrequencyQPAResidual(nn.Module):
         base = F.avg_pool2d(ll, 2)
         delta = F.interpolate(self.output_projection(context - base),
                               size=(height, width), mode="nearest")
-        block_gate = F.interpolate(block_gate, size=(height, width), mode="nearest")
-        updated_ll = ll + block_gate * delta
+        if self.gate_value_before_attention:
+            updated_ll = ll + delta
+        else:
+            block_gate = F.interpolate(block_gate, size=(height, width), mode="nearest")
+            updated_ll = ll + block_gate * delta
         reconstruction = haar_idwt2(updated_ll, lh, hl, hh)
         return x + self.alpha * self.expand(reconstruction)
 
