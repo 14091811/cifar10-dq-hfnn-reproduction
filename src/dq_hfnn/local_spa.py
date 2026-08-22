@@ -438,6 +438,67 @@ class DWTQPADBDMDownsample(nn.Module):
         return self.downsample(self.qpa(x))
 
 
+class FrequencyPoMGate(nn.Module):
+    """Use PoM-style polynomial context mixing to produce a spatial V gate."""
+
+    def __init__(self, channels=64, degree=2):
+        super().__init__()
+        self.degree = degree
+        self.context_proj = nn.Linear(channels, channels, bias=False)
+        self.query_proj = nn.Linear(channels, channels, bias=False)
+        self.coeff = nn.Parameter(torch.zeros(channels, degree))
+        self.gate_proj = nn.Conv2d(channels, channels, 1, bias=False)
+
+    def forward(self, ll, lh, hl, hh):
+        batch, channels, height, width = ll.shape
+        query = ll.flatten(2).transpose(1, 2)
+        context = torch.cat((lh, hl, hh), dim=2).flatten(2).transpose(1, 2)
+        context = self.context_proj(context)
+        activated = torch.clamp(F.leaky_relu(context, 0.01), -0.1, 6.0)
+        powers = []
+        power = activated
+        for _ in range(self.degree):
+            powers.append(power)
+            power = power * activated
+        polynomial = torch.stack(powers, dim=-1)
+        aggregated = (polynomial * self.coeff.view(1, 1, channels, self.degree)).sum(dim=-1)
+        aggregated = aggregated.mean(dim=1, keepdim=True)
+        selection = F.hardsigmoid(self.query_proj(query))
+        gated = selection * aggregated
+        gated = gated.transpose(1, 2).reshape(batch, channels, height, width)
+        return torch.sigmoid(self.gate_proj(gated))
+
+
+class DWTQPAFrequencyPoMDownsample(nn.Module):
+    """DWT downsampling with LL-QPA and PoM-generated high-frequency V gates."""
+
+    def __init__(self, mode="torchquantum"):
+        super().__init__()
+        self.reduce = nn.Conv2d(128, 64, 1, bias=False)
+        self.high_gate = FrequencyPoMGate(channels=64, degree=2)
+        self.qpa = DirectionalFrequencyQPAResidual(
+            channels=64,
+            reduced_channels=64,
+            relation_dim=16,
+            mode=mode,
+            entangled=mode == "torchquantum",
+            partial_value=True,
+            learned_partial_selection=True,
+            gate_value_before_attention=True,
+            residual_output=False,
+        )
+        self.expand = nn.Conv2d(64, 128, 1, bias=False)
+        self.output = nn.Sequential(nn.BatchNorm2d(128), nn.ReLU(inplace=True))
+
+    def forward(self, x):
+        reduced = self.reduce(x)
+        ll, lh, hl, hh = haar_dwt2(reduced)
+        value_gate = self.high_gate(ll, lh, hl, hh)
+        updated_ll = self.qpa.update_ll(ll, lh, hl, hh, value_gate=value_gate)
+        updated_ll = self.qpa.expand(updated_ll)
+        return self.output(self.expand(updated_ll))
+
+
 class MWHLQPADownsample(nn.Module):
     """MWHL-style DWT downsampler with QPA and no IDWT or outer residual."""
 
@@ -717,6 +778,18 @@ class TwoBlockDWTQPADBDMQuantumCNN(TwoBlockDirectionalDWTQPACNN):
     def __init__(self, num_classes=2, hidden_dim=128):
         super().__init__(num_classes=num_classes, hidden_dim=hidden_dim, mode=None)
         self.classical.frequency_modulator = DWTQPADBDMDownsample(mode="torchquantum")
+
+
+class TwoBlockDWTQPAFrequencyPoMClassicalCNN(TwoBlockDirectionalDWTQPACNN):
+    def __init__(self, num_classes=2, hidden_dim=128):
+        super().__init__(num_classes=num_classes, hidden_dim=hidden_dim, mode=None)
+        self.classical.frequency_modulator = DWTQPAFrequencyPoMDownsample(mode="classical")
+
+
+class TwoBlockDWTQPAFrequencyPoMQuantumCNN(TwoBlockDirectionalDWTQPACNN):
+    def __init__(self, num_classes=2, hidden_dim=128):
+        super().__init__(num_classes=num_classes, hidden_dim=hidden_dim, mode=None)
+        self.classical.frequency_modulator = DWTQPAFrequencyPoMDownsample(mode="torchquantum")
 
 
 class TwoBlockDirectionalDWTClassicalD8CNN(TwoBlockDirectionalDWTQPACNN):

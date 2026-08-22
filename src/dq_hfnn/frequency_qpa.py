@@ -484,13 +484,16 @@ class DirectionalFrequencyQPAResidual(nn.Module):
     def alpha(self):
         return self.alpha_max * self.alpha_logit.sigmoid()
 
-    def update_ll(self, ll, lh, hl, hh=None):
+    def update_ll(self, ll, lh, hl, hh=None, value_gate=None):
         batch, _, height, width = lh.shape
-        high_inputs = (lh, hl, hh) if self.include_hh_in_gate and hh is not None else (lh, hl)
-        if self.separate_band_depthwise_gate:
-            block_gate = self.high_gate(lh, hl, hh)
+        if value_gate is not None:
+            block_gate = value_gate
         else:
-            block_gate = self.high_gate(torch.cat(high_inputs, dim=1))
+            high_inputs = (lh, hl, hh) if self.include_hh_in_gate and hh is not None else (lh, hl)
+            if self.separate_band_depthwise_gate:
+                block_gate = self.high_gate(lh, hl, hh)
+            else:
+                block_gate = self.high_gate(torch.cat(high_inputs, dim=1))
         q, k, v = self.qkv(ll).chunk(3, dim=1)
         if self.token_pool_factor == 2:
             block_gate = F.avg_pool2d(block_gate, 2)
