@@ -531,6 +531,30 @@ class TwoBlockDirectionalDWTQuantumLearnedPartialD16RZCircuitCNN(TwoBlockDirecti
                          circuit_variant="rz_entangled")
 
 
+class TwoBlockDirectionalDWTQuantumLearnedPartialD16SingleCNOTCircuitCNN(TwoBlockDirectionalDWTQPACNN):
+    def __init__(self, num_classes=2, hidden_dim=128):
+        super().__init__(num_classes=num_classes, hidden_dim=hidden_dim,
+                         mode="torchquantum", relation_dim=16, partial_value=True,
+                         learned_partial_selection=True, gate_value_before_attention=True,
+                         circuit_variant="single_cnot")
+
+
+class TwoBlockDirectionalDWTQuantumLearnedPartialD16SymmetricRYCircuitCNN(TwoBlockDirectionalDWTQPACNN):
+    def __init__(self, num_classes=2, hidden_dim=128):
+        super().__init__(num_classes=num_classes, hidden_dim=hidden_dim,
+                         mode="torchquantum", relation_dim=16, partial_value=True,
+                         learned_partial_selection=True, gate_value_before_attention=True,
+                         circuit_variant="symmetric_ry")
+
+
+class TwoBlockDirectionalDWTQuantumLearnedPartialD16RZSingleCNOTCircuitCNN(TwoBlockDirectionalDWTQPACNN):
+    def __init__(self, num_classes=2, hidden_dim=128):
+        super().__init__(num_classes=num_classes, hidden_dim=hidden_dim,
+                         mode="torchquantum", relation_dim=16, partial_value=True,
+                         learned_partial_selection=True, gate_value_before_attention=True,
+                         circuit_variant="rz_single_cnot")
+
+
 class TwoBlockDirectionalDWTClassicalRoPED16CNN(TwoBlockDirectionalDWTQPACNN):
     def __init__(self, num_classes=2, hidden_dim=128):
         super().__init__(num_classes=num_classes, hidden_dim=hidden_dim, mode="classical",

@@ -90,7 +90,10 @@ class TorchQuantumQPAScorer(nn.Module):
 
     def __init__(self, entangled=True, pair_chunk=None, circuit_variant="baseline"):
         super().__init__()
-        if circuit_variant not in {"baseline", "no_entanglement", "rz_entangled"}:
+        if circuit_variant not in {
+            "baseline", "no_entanglement", "single_cnot", "symmetric_ry",
+            "rz_entangled", "rz_single_cnot",
+        }:
             raise ValueError(f"Unsupported circuit variant: {circuit_variant}")
         self.entangled = entangled
         self.circuit_variant = circuit_variant
@@ -100,13 +103,13 @@ class TorchQuantumQPAScorer(nn.Module):
         self.sum_scale = nn.Parameter(torch.empty(()))
         self.ent_scale = nn.Parameter(torch.empty(()))
         self.mixer_angle = nn.Parameter(torch.empty(()))
-        if circuit_variant == "rz_entangled":
+        if circuit_variant in {"rz_entangled", "rz_single_cnot"}:
             self.rz_scale = nn.Parameter(torch.empty(()))
         nn.init.normal_(self.diff_scale, mean=0.0, std=0.12)
         nn.init.normal_(self.sum_scale, mean=0.0, std=0.12)
         nn.init.normal_(self.ent_scale, mean=0.0, std=0.12)
         nn.init.normal_(self.mixer_angle, mean=0.0, std=0.12)
-        if circuit_variant == "rz_entangled":
+        if circuit_variant in {"rz_entangled", "rz_single_cnot"}:
             nn.init.normal_(self.rz_scale, mean=0.0, std=0.12)
         try:
             import torchquantum as tq
@@ -132,13 +135,16 @@ class TorchQuantumQPAScorer(nn.Module):
         self.tq.functional.ry(qdev, wires=0, params=first)
         self.tq.functional.ry(qdev, wires=1, params=second)
         use_entanglement = self.entangled and self.circuit_variant != "no_entanglement"
-        if self.circuit_variant == "rz_entangled":
+        if self.circuit_variant in {"rz_entangled", "rz_single_cnot"}:
             self.tq.functional.rz(qdev, wires=0, params=self.rz_scale * q)
             self.tq.functional.rz(qdev, wires=1, params=self.rz_scale * k)
         if use_entanglement:
             self.tq.functional.cnot(qdev, wires=[0, 1])
-        self.tq.functional.ry(qdev, wires=1, params=self.ent_scale * (q + k))
-        if use_entanglement:
+        middle_angle = self.ent_scale * (q + k)
+        self.tq.functional.ry(qdev, wires=1, params=middle_angle)
+        if self.circuit_variant == "symmetric_ry":
+            self.tq.functional.ry(qdev, wires=0, params=middle_angle)
+        if use_entanglement and self.circuit_variant not in {"single_cnot", "rz_single_cnot"}:
             self.tq.functional.cnot(qdev, wires=[1, 0])
         self.tq.functional.rx(qdev, wires=0, params=2.0 * self.mixer_angle)
         self.tq.functional.rx(qdev, wires=1, params=2.0 * self.mixer_angle)

@@ -11,6 +11,9 @@ MODELS_TO_TEST = (
     "two_block_dwt_directional_qpa_learned_d16_circuit_baseline_cnn",
     "two_block_dwt_directional_qpa_learned_d16_circuit_no_entanglement_cnn",
     "two_block_dwt_directional_qpa_learned_d16_circuit_rz_cnn",
+    "two_block_dwt_directional_qpa_learned_d16_circuit_single_cnot_cnn",
+    "two_block_dwt_directional_qpa_learned_d16_circuit_symmetric_ry_cnn",
+    "two_block_dwt_directional_qpa_learned_d16_circuit_rz_single_cnot_cnn",
 )
 
 
