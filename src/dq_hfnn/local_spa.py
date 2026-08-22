@@ -310,6 +310,33 @@ class ChannelWiseDWTQPA(nn.Module):
         return self.fuse(self.expand(haar_idwt2(ll, lh, hl, hh)))
 
 
+class FullChannelDWTQPA(nn.Module):
+    """Non-residual layer that sends all 64 reduced channels through DWT-QPA."""
+
+    def __init__(self, mode="torchquantum"):
+        super().__init__()
+        self.reduce = nn.Conv2d(128, 64, 1, bias=False)
+        self.dwt_qpa = DirectionalFrequencyQPAResidual(
+            channels=64,
+            reduced_channels=64,
+            relation_dim=16,
+            mode=mode,
+            entangled=mode == "torchquantum",
+            partial_value=True,
+            learned_partial_selection=True,
+            gate_value_before_attention=True,
+            residual_output=False,
+        )
+        self.expand = nn.Conv2d(64, 128, 1, bias=False)
+        self.fuse = nn.Sequential(
+            nn.BatchNorm2d(128),
+            nn.ReLU(inplace=True),
+        )
+
+    def forward(self, x):
+        return self.fuse(self.expand(self.dwt_qpa(self.reduce(x))))
+
+
 class TwoBlockDirectionalDWTQPACNN(nn.Module):
     """Paired two-block controls for the CIFAR binary small-sample study."""
 
@@ -390,6 +417,18 @@ class TwoBlockChannelWiseDWTQuantumOneHeadCNN(TwoBlockDirectionalDWTQPACNN):
     def __init__(self, num_classes=2, hidden_dim=128):
         super().__init__(num_classes=num_classes, hidden_dim=hidden_dim, mode=None)
         self.classical.frequency_modulator = ChannelWiseDWTQPA(mode="torchquantum", heads=1)
+
+
+class TwoBlockFullChannelDWTClassicalCNN(TwoBlockDirectionalDWTQPACNN):
+    def __init__(self, num_classes=2, hidden_dim=128):
+        super().__init__(num_classes=num_classes, hidden_dim=hidden_dim, mode=None)
+        self.classical.frequency_modulator = FullChannelDWTQPA(mode="classical")
+
+
+class TwoBlockFullChannelDWTQuantumCNN(TwoBlockDirectionalDWTQPACNN):
+    def __init__(self, num_classes=2, hidden_dim=128):
+        super().__init__(num_classes=num_classes, hidden_dim=hidden_dim, mode=None)
+        self.classical.frequency_modulator = FullChannelDWTQPA(mode="torchquantum")
 
 
 class TwoBlockDirectionalDWTClassicalD8CNN(TwoBlockDirectionalDWTQPACNN):
