@@ -499,6 +499,69 @@ class DWTQPAFrequencyPoMDownsample(nn.Module):
         return self.output(self.expand(updated_ll))
 
 
+class RHDWTDownsample(nn.Module):
+    """RHDWT-style frequency branch plus a stride-2 spatial residual branch."""
+
+    def __init__(self, mode="classical"):
+        super().__init__()
+        self.reduce = nn.Conv2d(128, 64, 1, bias=False)
+        self.frequency = nn.Sequential(
+            nn.Conv2d(256, 128, 3, padding=1, bias=False),
+            nn.BatchNorm2d(128),
+            nn.LeakyReLU(inplace=True),
+        )
+        self.spatial = nn.Sequential(
+            nn.Conv2d(128, 128, 3, stride=2, padding=1, bias=False),
+            nn.BatchNorm2d(128),
+        )
+        self.output = nn.Sequential(nn.BatchNorm2d(128), nn.ReLU(inplace=True))
+
+    def forward(self, x):
+        reduced = self.reduce(x)
+        ll, lh, hl, hh = haar_dwt2(reduced)
+        frequency = self.frequency(torch.cat((ll, lh, hl, hh), dim=1))
+        return self.output(frequency + self.spatial(x))
+
+
+class RHDWTQPADownsample(nn.Module):
+    """RHDWT-style spatial residual with LL-QPA and high-frequency V gating."""
+
+    def __init__(self, mode="torchquantum"):
+        super().__init__()
+        self.reduce = nn.Conv2d(128, 64, 1, bias=False)
+        self.high_gate = nn.Sequential(
+            nn.Conv2d(128, 128, 3, padding=1, groups=128, bias=False),
+            nn.GELU(),
+            nn.Conv2d(128, 64, 1, bias=False),
+            nn.Sigmoid(),
+        )
+        self.qpa = DirectionalFrequencyQPAResidual(
+            channels=64,
+            reduced_channels=64,
+            relation_dim=16,
+            mode=mode,
+            entangled=mode == "torchquantum",
+            partial_value=True,
+            learned_partial_selection=True,
+            gate_value_before_attention=True,
+            residual_output=False,
+        )
+        self.frequency_expand = nn.Conv2d(64, 128, 1, bias=False)
+        self.spatial = nn.Sequential(
+            nn.Conv2d(128, 128, 3, stride=2, padding=1, bias=False),
+            nn.BatchNorm2d(128),
+        )
+        self.output = nn.Sequential(nn.BatchNorm2d(128), nn.ReLU(inplace=True))
+
+    def forward(self, x):
+        reduced = self.reduce(x)
+        ll, lh, hl, hh = haar_dwt2(reduced)
+        value_gate = self.high_gate(torch.cat((lh, hl, hh), dim=1))
+        updated_ll = self.qpa.update_ll(ll, lh, hl, hh, value_gate=value_gate)
+        frequency = self.frequency_expand(updated_ll)
+        return self.output(frequency + self.spatial(x))
+
+
 class MWHLQPADownsample(nn.Module):
     """MWHL-style DWT downsampler with QPA and no IDWT or outer residual."""
 
@@ -790,6 +853,24 @@ class TwoBlockDWTQPAFrequencyPoMQuantumCNN(TwoBlockDirectionalDWTQPACNN):
     def __init__(self, num_classes=2, hidden_dim=128):
         super().__init__(num_classes=num_classes, hidden_dim=hidden_dim, mode=None)
         self.classical.frequency_modulator = DWTQPAFrequencyPoMDownsample(mode="torchquantum")
+
+
+class TwoBlockRHDWTClassicalCNN(TwoBlockDirectionalDWTQPACNN):
+    def __init__(self, num_classes=2, hidden_dim=128):
+        super().__init__(num_classes=num_classes, hidden_dim=hidden_dim, mode=None)
+        self.classical.frequency_modulator = RHDWTDownsample(mode="classical")
+
+
+class TwoBlockRHDWTQPAClassicalCNN(TwoBlockDirectionalDWTQPACNN):
+    def __init__(self, num_classes=2, hidden_dim=128):
+        super().__init__(num_classes=num_classes, hidden_dim=hidden_dim, mode=None)
+        self.classical.frequency_modulator = RHDWTQPADownsample(mode="classical")
+
+
+class TwoBlockRHDWTQPAQuantumCNN(TwoBlockDirectionalDWTQPACNN):
+    def __init__(self, num_classes=2, hidden_dim=128):
+        super().__init__(num_classes=num_classes, hidden_dim=hidden_dim, mode=None)
+        self.classical.frequency_modulator = RHDWTQPADownsample(mode="torchquantum")
 
 
 class TwoBlockDirectionalDWTClassicalD8CNN(TwoBlockDirectionalDWTQPACNN):
