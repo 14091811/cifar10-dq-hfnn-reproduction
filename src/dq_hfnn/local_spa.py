@@ -291,11 +291,11 @@ class PartialChannelDWTQPA(nn.Module):
 class ChannelWiseDWTQPA(nn.Module):
     """Non-residual DWT layer whose QPA tokens are feature channels."""
 
-    def __init__(self, mode="torchquantum"):
+    def __init__(self, mode="torchquantum", heads=4):
         super().__init__()
         self.reduce = nn.Conv2d(128, 64, 1, bias=False)
         self.attention = ChannelWiseFrequencyQPA(
-            channels=64, heads=4, mode=mode, entangled=mode == "torchquantum"
+            channels=64, heads=heads, mode=mode, entangled=mode == "torchquantum"
         )
         self.expand = nn.Conv2d(64, 128, 1, bias=False)
         self.fuse = nn.Sequential(
@@ -378,6 +378,18 @@ class TwoBlockChannelWiseDWTQuantumCNN(TwoBlockDirectionalDWTQPACNN):
     def __init__(self, num_classes=2, hidden_dim=128):
         super().__init__(num_classes=num_classes, hidden_dim=hidden_dim, mode=None)
         self.classical.frequency_modulator = ChannelWiseDWTQPA(mode="torchquantum")
+
+
+class TwoBlockChannelWiseDWTClassicalOneHeadCNN(TwoBlockDirectionalDWTQPACNN):
+    def __init__(self, num_classes=2, hidden_dim=128):
+        super().__init__(num_classes=num_classes, hidden_dim=hidden_dim, mode=None)
+        self.classical.frequency_modulator = ChannelWiseDWTQPA(mode="classical", heads=1)
+
+
+class TwoBlockChannelWiseDWTQuantumOneHeadCNN(TwoBlockDirectionalDWTQPACNN):
+    def __init__(self, num_classes=2, hidden_dim=128):
+        super().__init__(num_classes=num_classes, hidden_dim=hidden_dim, mode=None)
+        self.classical.frequency_modulator = ChannelWiseDWTQPA(mode="torchquantum", heads=1)
 
 
 class TwoBlockDirectionalDWTClassicalD8CNN(TwoBlockDirectionalDWTQPACNN):
