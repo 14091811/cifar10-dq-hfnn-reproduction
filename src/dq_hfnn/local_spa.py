@@ -264,7 +264,7 @@ class TwoBlockDirectionalDWTQPACNN(nn.Module):
                  grouped_relation=False, group_size=4, learned_partial_selection=False,
                  include_hh_in_gate=False, gate_value_before_attention=False,
                  star_value_gate=False, standard_value_gate=False,
-                 circuit_variant="baseline"):
+                 circuit_variant="baseline", token_pool_factor=2):
         super().__init__()
         if hidden_dim != 128:
             raise ValueError("TwoBlockDirectionalDWTQPACNN uses a fixed 128D GAP feature")
@@ -287,6 +287,7 @@ class TwoBlockDirectionalDWTQPACNN(nn.Module):
                 star_value_gate=star_value_gate,
                 standard_value_gate=standard_value_gate,
                 circuit_variant=circuit_variant,
+                token_pool_factor=token_pool_factor,
             )
         self.classifier = nn.Linear(128, num_classes)
 
@@ -553,6 +554,22 @@ class TwoBlockDirectionalDWTQuantumLearnedPartialD16RZSingleCNOTCircuitCNN(TwoBl
                          mode="torchquantum", relation_dim=16, partial_value=True,
                          learned_partial_selection=True, gate_value_before_attention=True,
                          circuit_variant="rz_single_cnot")
+
+
+class TwoBlockDirectionalDWTClassicalLearnedPartialD16HighResTokenCNN(TwoBlockDirectionalDWTQPACNN):
+    def __init__(self, num_classes=2, hidden_dim=128):
+        super().__init__(num_classes=num_classes, hidden_dim=hidden_dim, mode="classical",
+                         relation_dim=16, partial_value=True,
+                         learned_partial_selection=True, gate_value_before_attention=True,
+                         token_pool_factor=1)
+
+
+class TwoBlockDirectionalDWTQuantumLearnedPartialD16HighResTokenCNN(TwoBlockDirectionalDWTQPACNN):
+    def __init__(self, num_classes=2, hidden_dim=128):
+        super().__init__(num_classes=num_classes, hidden_dim=hidden_dim, mode="torchquantum",
+                         relation_dim=16, partial_value=True,
+                         learned_partial_selection=True, gate_value_before_attention=True,
+                         token_pool_factor=1)
 
 
 class TwoBlockDirectionalDWTClassicalRoPED16CNN(TwoBlockDirectionalDWTQPACNN):

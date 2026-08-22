@@ -314,7 +314,7 @@ class DirectionalFrequencyQPAResidual(nn.Module):
                  group_size=4, learned_partial_selection=False,
                  include_hh_in_gate=False, gate_value_before_attention=False,
                  star_value_gate=False, standard_value_gate=False,
-                 circuit_variant="baseline"):
+                 circuit_variant="baseline", token_pool_factor=2):
         super().__init__()
         if relation_dim <= 0 or relation_dim > reduced_channels:
             raise ValueError("relation_dim must be in [1, reduced_channels]")
@@ -322,6 +322,8 @@ class DirectionalFrequencyQPAResidual(nn.Module):
             raise ValueError("alpha_init must be between zero and alpha_max")
         if mode not in {"classical", "torchquantum"}:
             raise ValueError(f"Unsupported directional QPA mode: {mode}")
+        if token_pool_factor not in {1, 2}:
+            raise ValueError("token_pool_factor must be 1 or 2")
         if rope_2d and relation_dim % 4:
             raise ValueError("2D RoPE requires relation_dim divisible by four")
         if grouped_relation and (relation_dim % group_size):
@@ -341,6 +343,7 @@ class DirectionalFrequencyQPAResidual(nn.Module):
         self.group_size = group_size
         self.mode = mode
         self.circuit_variant = circuit_variant
+        self.token_pool_factor = token_pool_factor
         self.reduce = nn.Conv2d(channels, reduced_channels, 1, bias=False)
         high_gate_input_channels = reduced_channels * (3 if include_hh_in_gate else 2)
         if star_value_gate and standard_value_gate:
@@ -416,9 +419,11 @@ class DirectionalFrequencyQPAResidual(nn.Module):
         ll, lh, hl, hh = haar_dwt2(reduced)
         batch, _, height, width = lh.shape
         high_inputs = (lh, hl, hh) if self.include_hh_in_gate else (lh, hl)
-        block_gate = F.avg_pool2d(self.high_gate(torch.cat(high_inputs, dim=1)), 2)
+        block_gate = self.high_gate(torch.cat(high_inputs, dim=1))
         q, k, v = self.qkv(ll).chunk(3, dim=1)
-        q, k, v = (F.avg_pool2d(tensor, 2) for tensor in (q, k, v))
+        if self.token_pool_factor == 2:
+            block_gate = F.avg_pool2d(block_gate, 2)
+            q, k, v = (F.avg_pool2d(tensor, 2) for tensor in (q, k, v))
         if self.gate_value_before_attention:
             # DWA-style placement: gate V before token relation aggregation.
             v = v * block_gate
@@ -465,7 +470,7 @@ class DirectionalFrequencyQPAResidual(nn.Module):
             context = weights @ v
         side = int(tokens ** 0.5)
         context = context.transpose(1, 2).reshape(batch, self.reduced_channels, side, side)
-        base = F.avg_pool2d(ll, 2)
+        base = F.avg_pool2d(ll, self.token_pool_factor) if self.token_pool_factor == 2 else ll
         delta = F.interpolate(self.output_projection(context - base),
                               size=(height, width), mode="nearest")
         if self.gate_value_before_attention:
