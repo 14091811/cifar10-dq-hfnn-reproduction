@@ -375,6 +375,69 @@ class MWHLFusedFullChannelDWTQPA(nn.Module):
         return self.fuse(self.expand(reconstructed))
 
 
+class DynamicBlockDownsample(nn.Module):
+    """Learned four-block spatial downsampling from the DBDM design."""
+
+    def __init__(self, in_channels=128, out_channels=128):
+        super().__init__()
+        self.offset_conv1 = nn.Conv2d(in_channels, in_channels, 3, padding=1)
+        self.offset_conv2 = nn.Conv2d(in_channels, 8, 3, stride=2, padding=1)
+        self.block_conv = nn.Conv2d(in_channels, out_channels // 4, 3, padding=1)
+        self.residual_conv = nn.Conv2d(in_channels, out_channels, 3, stride=2, padding=1)
+        self.final_conv = nn.Conv2d(out_channels, out_channels, 1)
+
+    @staticmethod
+    def _base_grid(height, width, device, dtype):
+        out_h, out_w = height // 2, width // 2
+        y, x = torch.meshgrid(
+            torch.linspace(-1, 1, out_h, device=device, dtype=dtype),
+            torch.linspace(-1, 1, out_w, device=device, dtype=dtype),
+            indexing="ij",
+        )
+        base = torch.stack((x, y), dim=-1).unsqueeze(0)
+        offsets = torch.tensor(
+            [[-0.5, -0.5], [0.5, -0.5], [-0.5, 0.5], [0.5, 0.5]],
+            device=device, dtype=dtype,
+        ).view(4, 1, 1, 2)
+        return base * 0.5 + offsets
+
+    def forward(self, x):
+        batch, _, height, width = x.shape
+        offsets = F.relu(self.offset_conv1(x))
+        offsets = self.offset_conv2(offsets)
+        offsets = offsets.view(batch, 4, 2, height // 2, width // 2).permute(0, 1, 3, 4, 2)
+        grid = self._base_grid(height, width, x.device, x.dtype) + offsets
+        grid = grid.clamp(-1, 1)
+        blocks = [
+            F.grid_sample(x, grid[:, index], align_corners=True)
+            for index in range(4)
+        ]
+        dynamic = torch.cat([self.block_conv(block) for block in blocks], dim=1)
+        return self.final_conv(dynamic + self.residual_conv(x))
+
+
+class DWTQPADBDMDownsample(nn.Module):
+    """DWT-QPA feature processing followed by learned spatial downsampling."""
+
+    def __init__(self, mode="torchquantum"):
+        super().__init__()
+        self.qpa = DirectionalFrequencyQPAResidual(
+            channels=128,
+            reduced_channels=64,
+            relation_dim=16,
+            mode=mode,
+            entangled=mode == "torchquantum",
+            partial_value=True,
+            learned_partial_selection=True,
+            gate_value_before_attention=True,
+            residual_output=False,
+        )
+        self.downsample = DynamicBlockDownsample(128, 128)
+
+    def forward(self, x):
+        return self.downsample(self.qpa(x))
+
+
 class MWHLQPADownsample(nn.Module):
     """MWHL-style DWT downsampler with QPA and no IDWT or outer residual."""
 
@@ -636,6 +699,24 @@ class TwoBlockHighFrequencyDownsampleQuantumCNN(TwoBlockDirectionalDWTQPACNN):
     def __init__(self, num_classes=2, hidden_dim=128):
         super().__init__(num_classes=num_classes, hidden_dim=hidden_dim, mode=None)
         self.classical.frequency_modulator = HighFrequencyQPADownsample(mode="torchquantum")
+
+
+class TwoBlockDBDMClassicalCNN(TwoBlockDirectionalDWTQPACNN):
+    def __init__(self, num_classes=2, hidden_dim=128):
+        super().__init__(num_classes=num_classes, hidden_dim=hidden_dim, mode=None)
+        self.classical.frequency_modulator = DynamicBlockDownsample(128, 128)
+
+
+class TwoBlockDWTQPADBDMClassicalCNN(TwoBlockDirectionalDWTQPACNN):
+    def __init__(self, num_classes=2, hidden_dim=128):
+        super().__init__(num_classes=num_classes, hidden_dim=hidden_dim, mode=None)
+        self.classical.frequency_modulator = DWTQPADBDMDownsample(mode="classical")
+
+
+class TwoBlockDWTQPADBDMQuantumCNN(TwoBlockDirectionalDWTQPACNN):
+    def __init__(self, num_classes=2, hidden_dim=128):
+        super().__init__(num_classes=num_classes, hidden_dim=hidden_dim, mode=None)
+        self.classical.frequency_modulator = DWTQPADBDMDownsample(mode="torchquantum")
 
 
 class TwoBlockDirectionalDWTClassicalD8CNN(TwoBlockDirectionalDWTQPACNN):
