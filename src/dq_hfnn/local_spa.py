@@ -337,6 +337,44 @@ class FullChannelDWTQPA(nn.Module):
         return self.fuse(self.expand(self.dwt_qpa(self.reduce(x))))
 
 
+class MWHLFusedFullChannelDWTQPA(nn.Module):
+    """Non-residual full-channel DWT-QPA with an LL/original-spatial fusion."""
+
+    def __init__(self, mode="torchquantum"):
+        super().__init__()
+        self.reduce = nn.Conv2d(128, 64, 1, bias=False)
+        self.ll_fusion = nn.Sequential(
+            nn.Conv2d(128, 64, 1, bias=False),
+            nn.BatchNorm2d(64),
+            nn.ReLU(inplace=True),
+        )
+        self.dwt_qpa = DirectionalFrequencyQPAResidual(
+            channels=64,
+            reduced_channels=64,
+            relation_dim=16,
+            mode=mode,
+            entangled=mode == "torchquantum",
+            partial_value=True,
+            learned_partial_selection=True,
+            gate_value_before_attention=True,
+            residual_output=False,
+        )
+        self.expand = nn.Conv2d(64, 128, 1, bias=False)
+        self.fuse = nn.Sequential(
+            nn.BatchNorm2d(128),
+            nn.ReLU(inplace=True),
+        )
+
+    def forward(self, x):
+        reduced = self.reduce(x)
+        ll, lh, hl, hh = haar_dwt2(reduced)
+        spatial = F.max_pool2d(reduced, 2)
+        fused_ll = self.ll_fusion(torch.cat((ll, spatial), dim=1))
+        updated_ll = self.dwt_qpa.update_ll(fused_ll, lh, hl, hh)
+        reconstructed = haar_idwt2(updated_ll, lh, hl, hh)
+        return self.fuse(self.expand(reconstructed))
+
+
 class TwoBlockDirectionalDWTQPACNN(nn.Module):
     """Paired two-block controls for the CIFAR binary small-sample study."""
 
@@ -429,6 +467,18 @@ class TwoBlockFullChannelDWTQuantumCNN(TwoBlockDirectionalDWTQPACNN):
     def __init__(self, num_classes=2, hidden_dim=128):
         super().__init__(num_classes=num_classes, hidden_dim=hidden_dim, mode=None)
         self.classical.frequency_modulator = FullChannelDWTQPA(mode="torchquantum")
+
+
+class TwoBlockMWHLFusedFullChannelDWTClassicalCNN(TwoBlockDirectionalDWTQPACNN):
+    def __init__(self, num_classes=2, hidden_dim=128):
+        super().__init__(num_classes=num_classes, hidden_dim=hidden_dim, mode=None)
+        self.classical.frequency_modulator = MWHLFusedFullChannelDWTQPA(mode="classical")
+
+
+class TwoBlockMWHLFusedFullChannelDWTQuantumCNN(TwoBlockDirectionalDWTQPACNN):
+    def __init__(self, num_classes=2, hidden_dim=128):
+        super().__init__(num_classes=num_classes, hidden_dim=hidden_dim, mode=None)
+        self.classical.frequency_modulator = MWHLFusedFullChannelDWTQPA(mode="torchquantum")
 
 
 class TwoBlockDirectionalDWTClassicalD8CNN(TwoBlockDirectionalDWTQPACNN):

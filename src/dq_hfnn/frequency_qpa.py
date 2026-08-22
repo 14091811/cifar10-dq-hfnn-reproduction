@@ -459,11 +459,9 @@ class DirectionalFrequencyQPAResidual(nn.Module):
     def alpha(self):
         return self.alpha_max * self.alpha_logit.sigmoid()
 
-    def forward(self, x):
-        reduced = self.reduce(x)
-        ll, lh, hl, hh = haar_dwt2(reduced)
+    def update_ll(self, ll, lh, hl, hh=None):
         batch, _, height, width = lh.shape
-        high_inputs = (lh, hl, hh) if self.include_hh_in_gate else (lh, hl)
+        high_inputs = (lh, hl, hh) if self.include_hh_in_gate and hh is not None else (lh, hl)
         block_gate = self.high_gate(torch.cat(high_inputs, dim=1))
         q, k, v = self.qkv(ll).chunk(3, dim=1)
         if self.token_pool_factor == 2:
@@ -523,6 +521,12 @@ class DirectionalFrequencyQPAResidual(nn.Module):
         else:
             block_gate = F.interpolate(block_gate, size=(height, width), mode="nearest")
             updated_ll = ll + block_gate * delta
+        return updated_ll
+
+    def forward(self, x):
+        reduced = self.reduce(x)
+        ll, lh, hl, hh = haar_dwt2(reduced)
+        updated_ll = self.update_ll(ll, lh, hl, hh)
         reconstruction = haar_idwt2(updated_ll, lh, hl, hh)
         transformed = self.expand(reconstruction)
         if not self.residual_output:
