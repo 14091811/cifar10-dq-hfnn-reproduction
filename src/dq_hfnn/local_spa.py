@@ -779,6 +779,70 @@ class TwoBlockClassicalCNN(TwoBlockDirectionalDWTQPACNN):
         super().__init__(num_classes=num_classes, hidden_dim=hidden_dim, mode=None)
 
 
+class TwoBlockSingleSPAGCBranch(nn.Module):
+    """Two-block CNN with one Yang-style SP&A block between the ResBlocks."""
+
+    def __init__(self, attention="gc", qpa_mode="classical"):
+        super().__init__()
+        self.stem = nn.Sequential(
+            nn.Conv2d(3, 64, 3, padding=1, bias=False),
+            nn.BatchNorm2d(64),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(2),
+        )
+        self.block1 = Block(64, 128)
+        self.spa = YangSPABlock(128, attention=attention, qpa_mode=qpa_mode)
+        self.block2 = Block(128, 128)
+        self.pool = nn.AdaptiveAvgPool2d(1)
+
+    def forward(self, x):
+        x = self.stem(x)
+        x = self.block1(x)
+        x = self.spa(x)
+        x = self.block2(x)
+        return self.pool(x).flatten(1)
+
+
+class TwoBlockSingleSPAGCClassicalCNN(nn.Module):
+    """Two-block CNN with the original classical SP&A attention control."""
+
+    def __init__(self, num_classes=2, hidden_dim=128):
+        super().__init__()
+        self.features = TwoBlockSingleSPAGCBranch(attention="gc")
+        self.classifier = nn.Linear(128, num_classes)
+
+    def forward(self, x):
+        return self.classifier(self.features(x))
+
+
+class TwoBlockSingleSPADWTQPAClassicalCNN(nn.Module):
+    """Single SP&A block with DWT-QPA replaced by a classical scorer."""
+
+    def __init__(self, num_classes=2, hidden_dim=128):
+        super().__init__()
+        self.features = TwoBlockSingleSPAGCBranch(
+            attention="dwt_qpa", qpa_mode="classical"
+        )
+        self.classifier = nn.Linear(128, num_classes)
+
+    def forward(self, x):
+        return self.classifier(self.features(x))
+
+
+class TwoBlockSingleSPADWTQPAQuantumCNN(nn.Module):
+    """Single SP&A block with DWT-QPA and a quantum scorer."""
+
+    def __init__(self, num_classes=2, hidden_dim=128):
+        super().__init__()
+        self.features = TwoBlockSingleSPAGCBranch(
+            attention="dwt_qpa", qpa_mode="torchquantum"
+        )
+        self.classifier = nn.Linear(128, num_classes)
+
+    def forward(self, x):
+        return self.classifier(self.features(x))
+
+
 class TwoBlockPartialChannelDWTClassicalCNN(TwoBlockDirectionalDWTQPACNN):
     def __init__(self, num_classes=2, hidden_dim=128):
         super().__init__(num_classes=num_classes, hidden_dim=hidden_dim, mode=None)

@@ -18,6 +18,9 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from dq_hfnn.local_spa import (
     TwoBlockClassicalCNN,
+    TwoBlockSingleSPAGCClassicalCNN,
+    TwoBlockSingleSPADWTQPAClassicalCNN,
+    TwoBlockSingleSPADWTQPAQuantumCNN,
     TwoBlockPartialChannelDWTClassicalCNN,
     TwoBlockPartialChannelDWTQuantumCNN,
     TwoBlockChannelWiseDWTClassicalCNN,
@@ -96,6 +99,9 @@ from dq_hfnn.run_io import create_run_directory, write_json
 
 MODELS = {
     "two_block_classical_cnn": TwoBlockClassicalCNN,
+    "two_block_single_spa_classical_cnn": TwoBlockSingleSPAGCClassicalCNN,
+    "two_block_single_spa_dwt_qpa_classical_cnn": TwoBlockSingleSPADWTQPAClassicalCNN,
+    "two_block_single_spa_dwt_qpa_qpa_cnn": TwoBlockSingleSPADWTQPAQuantumCNN,
     "two_block_partial_channel_dwt_classical_cnn": TwoBlockPartialChannelDWTClassicalCNN,
     "two_block_partial_channel_dwt_qpa_cnn": TwoBlockPartialChannelDWTQuantumCNN,
     "two_block_channelwise_dwt_classical_cnn": TwoBlockChannelWiseDWTClassicalCNN,
