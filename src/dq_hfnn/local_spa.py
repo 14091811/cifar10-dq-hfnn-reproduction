@@ -413,6 +413,52 @@ class MWHLQPADownsample(nn.Module):
         return self.output(self.expand(updated_ll))
 
 
+class HighFrequencyQPADownsample(nn.Module):
+    """DWT downsampler that explicitly fuses LL with learned high-frequency features.
+
+    Unlike MWHL, the second input to the fusion layer is not max-pooled spatial
+    input.  LH, HL, and HH are projected at the native DWT resolution and are
+    fused with LL before QPA.  The directional bands are still passed to QPA
+    so its value gate can use the same frequency information.
+    """
+
+    def __init__(self, mode="torchquantum"):
+        super().__init__()
+        self.reduce = nn.Conv2d(128, 64, 1, bias=False)
+        self.high_fusion = nn.Sequential(
+            nn.Conv2d(192, 64, 1, bias=False),
+            nn.BatchNorm2d(64),
+            nn.ReLU(inplace=True),
+        )
+        self.ll_fusion = nn.Sequential(
+            nn.Conv2d(128, 64, 1, bias=False),
+            nn.BatchNorm2d(64),
+            nn.ReLU(inplace=True),
+        )
+        self.qpa = DirectionalFrequencyQPAResidual(
+            channels=64,
+            reduced_channels=64,
+            relation_dim=16,
+            mode=mode,
+            entangled=mode == "torchquantum",
+            partial_value=True,
+            learned_partial_selection=True,
+            gate_value_before_attention=True,
+            residual_output=False,
+        )
+        self.expand = nn.Conv2d(64, 128, 1, bias=False)
+        self.output = nn.Sequential(nn.BatchNorm2d(128), nn.ReLU(inplace=True))
+
+    def forward(self, x):
+        reduced = self.reduce(x)
+        ll, lh, hl, hh = haar_dwt2(reduced)
+        high = self.high_fusion(torch.cat((lh, hl, hh), dim=1))
+        fused_ll = self.ll_fusion(torch.cat((ll, high), dim=1))
+        updated_ll = self.qpa.update_ll(fused_ll, lh, hl, hh)
+        updated_ll = self.qpa.expand(updated_ll)
+        return self.output(self.expand(updated_ll))
+
+
 class TwoBlockDirectionalDWTQPACNN(nn.Module):
     """Paired two-block controls for the CIFAR binary small-sample study."""
 
@@ -529,6 +575,18 @@ class TwoBlockMWHLDownsampleQuantumCNN(TwoBlockDirectionalDWTQPACNN):
     def __init__(self, num_classes=2, hidden_dim=128):
         super().__init__(num_classes=num_classes, hidden_dim=hidden_dim, mode=None)
         self.classical.frequency_modulator = MWHLQPADownsample(mode="torchquantum")
+
+
+class TwoBlockHighFrequencyDownsampleClassicalCNN(TwoBlockDirectionalDWTQPACNN):
+    def __init__(self, num_classes=2, hidden_dim=128):
+        super().__init__(num_classes=num_classes, hidden_dim=hidden_dim, mode=None)
+        self.classical.frequency_modulator = HighFrequencyQPADownsample(mode="classical")
+
+
+class TwoBlockHighFrequencyDownsampleQuantumCNN(TwoBlockDirectionalDWTQPACNN):
+    def __init__(self, num_classes=2, hidden_dim=128):
+        super().__init__(num_classes=num_classes, hidden_dim=hidden_dim, mode=None)
+        self.classical.frequency_modulator = HighFrequencyQPADownsample(mode="torchquantum")
 
 
 class TwoBlockDirectionalDWTClassicalD8CNN(TwoBlockDirectionalDWTQPACNN):
