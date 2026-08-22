@@ -159,6 +159,156 @@ class TorchQuantumQPAScorer(nn.Module):
         return torch.cat(scores).reshape(shape)
 
 
+class VectorClassicalQPAScorer(nn.Module):
+    """Classical control for a vector-valued q/k pair."""
+
+    def __init__(self, dimension=4):
+        super().__init__()
+        self.dimension = dimension
+        self.projection = nn.Linear(dimension * 5, 1, bias=False)
+        nn.init.normal_(self.projection.weight, mean=0.0, std=0.08)
+
+    def forward(self, q, k):
+        q, k = torch.broadcast_tensors(q, k)
+        features = torch.cat((q, k, q - k, q + k, q * k), dim=-1)
+        return torch.sigmoid(self.projection(features).squeeze(-1))
+
+
+class FourQubitVectorQPAScorer(nn.Module):
+    """Four-qubit angle-encoded scorer for a vector-valued q/k pair.
+
+    Each q and k vector occupies one qubit per dimension.  A ring of CNOTs
+    couples the dimensions before measuring the mean Z expectation.  Pair
+    chunks keep the state-vector simulation bounded for attention matrices.
+    """
+
+    def __init__(self, dimension=4, pair_chunk=None, entangled=True):
+        super().__init__()
+        if dimension != 4:
+            raise ValueError("FourQubitVectorQPAScorer requires dimension=4")
+        self.dimension = dimension
+        self.pair_chunk = pair_chunk
+        self.entangled = entangled
+        self.input_scale = nn.Parameter(torch.tensor(0.5))
+        self.diff_scale = nn.Parameter(torch.tensor(0.0))
+        self.sum_scale = nn.Parameter(torch.tensor(0.0))
+        self.rz_scale = nn.Parameter(torch.tensor(0.0))
+        try:
+            import torchquantum as tq
+        except ImportError as error:
+            raise ImportError(
+                "FourQubitVectorQPAScorer requires torchquantum."
+            ) from error
+        self.tq = tq
+
+    def _chunk_size(self):
+        configured = self.pair_chunk or os.environ.get("TORCHQUANTUM_PAIR_CHUNK", "32768")
+        chunk = int(configured)
+        if chunk <= 0:
+            raise ValueError("TORCHQUANTUM_PAIR_CHUNK must be positive")
+        return chunk
+
+    def _run_chunk(self, q, k):
+        qdev = self.tq.QuantumDevice(
+            n_wires=4, bsz=q.shape[0], device=q.device, record_op=False,
+        )
+        qdev.reset_states(bsz=q.shape[0])
+        difference = q - k
+        summed = q + k
+        for wire in range(4):
+            q_angle = math.pi / 4 + self.input_scale * q[:, wire]
+            q_angle = q_angle + self.diff_scale * difference[:, wire]
+            q_angle = q_angle + self.sum_scale * summed[:, wire]
+            k_angle = math.pi / 4 + self.input_scale * k[:, wire]
+            k_angle = k_angle - self.diff_scale * difference[:, wire]
+            k_angle = k_angle + self.sum_scale * summed[:, wire]
+            self.tq.functional.ry(qdev, wires=wire, params=q_angle)
+            self.tq.functional.ry(qdev, wires=wire, params=k_angle)
+            self.tq.functional.rz(qdev, wires=wire, params=self.rz_scale * summed[:, wire])
+        if self.entangled:
+            for wire in range(4):
+                self.tq.functional.cnot(qdev, wires=[wire, (wire + 1) % 4])
+
+        probabilities = qdev.get_states_1d().abs().square()
+        basis = torch.arange(16, device=q.device)
+        z_sum = probabilities.new_zeros(probabilities.shape[0])
+        for wire in range(4):
+            eigenvalue = 1.0 - 2.0 * ((basis >> wire) & 1).to(probabilities.dtype)
+            z_sum = z_sum + (probabilities * eigenvalue.unsqueeze(0)).sum(dim=1)
+        return 0.5 * (z_sum / 4.0 + 1.0)
+
+    def forward(self, q, k):
+        q, k = torch.broadcast_tensors(q, k)
+        if q.shape[-1] != 4:
+            raise ValueError("FourQubitVectorQPAScorer expects vectors of length four")
+        shape = q.shape[:-1]
+        q, k = q.reshape(-1, 4), k.reshape(-1, 4)
+        chunk = self._chunk_size()
+        scores = [
+            self._run_chunk(q[start:start + chunk], k[start:start + chunk])
+            for start in range(0, q.shape[0], chunk)
+        ]
+        return torch.cat(scores).reshape(shape)
+
+
+class VectorFrequencyPoMDownsample(nn.Module):
+    """DWT downsample with PoM value gating and four-dimensional LL QPA."""
+
+    def __init__(self, mode="torchquantum"):
+        super().__init__()
+        if mode not in {"classical", "torchquantum"}:
+            raise ValueError(f"Unsupported vector QPA mode: {mode}")
+        self.mode = mode
+        self.reduce = nn.Conv2d(128, 64, 1, bias=False)
+        self.context_proj = nn.Linear(64, 64, bias=False)
+        self.query_proj = nn.Linear(64, 64, bias=False)
+        self.coeff = nn.Parameter(torch.zeros(64, 2))
+        self.gate_proj = nn.Conv2d(64, 64, 1, bias=False)
+        self.q_projection = nn.Conv2d(64, 4, 1, bias=False)
+        self.k_projection = nn.Conv2d(64, 4, 1, bias=False)
+        self.v_projection = nn.Conv2d(64, 64, 1, bias=False)
+        self.scorer = (
+            VectorClassicalQPAScorer(4) if mode == "classical"
+            else FourQubitVectorQPAScorer(4)
+        )
+        self.output = nn.Sequential(
+            nn.Conv2d(64, 128, 1, bias=False),
+            nn.BatchNorm2d(128),
+            nn.ReLU(inplace=True),
+        )
+
+    def forward(self, x):
+        reduced = self.reduce(x)
+        ll, lh, hl, hh = haar_dwt2(reduced)
+        high = torch.cat((lh, hl, hh), dim=1)
+        query = ll.flatten(2).transpose(1, 2)
+        context = high.reshape(high.shape[0], 3, 64, *high.shape[-2:])
+        context = context.flatten(3).transpose(1, 2).reshape(high.shape[0], -1, 64)
+        context = self.context_proj(context)
+        activated = torch.clamp(F.leaky_relu(context, 0.01), -0.1, 6.0)
+        polynomial = torch.stack((activated, activated * activated), dim=-1)
+        aggregated = (polynomial * self.coeff.view(1, 1, 64, 2)).sum(dim=-1)
+        aggregated = aggregated.mean(dim=1, keepdim=True)
+        selection = F.hardsigmoid(self.query_proj(query))
+        gated = selection * aggregated
+        gated = gated.transpose(1, 2).reshape_as(ll)
+        value_gate = torch.sigmoid(self.gate_proj(gated))
+
+        q = F.avg_pool2d(self.q_projection(ll), 2)
+        k = F.avg_pool2d(self.k_projection(ll), 2)
+        v = F.avg_pool2d(self.v_projection(ll) * value_gate, 2)
+        batch, _, height, width = q.shape
+        q = q.flatten(2).transpose(1, 2)
+        k = k.flatten(2).transpose(1, 2)
+        v = v.flatten(2).transpose(1, 2)
+        scores = self.scorer(q.unsqueeze(2), k.unsqueeze(1))
+        weights = scores.softmax(dim=-1)
+        context = weights @ v
+        context = context.transpose(1, 2).reshape(batch, 64, height, width)
+        context = F.interpolate(context, size=ll.shape[-2:], mode="nearest")
+        return self.output(context)
+
+
 class FrequencyQPAAttention(nn.Module):
     """LL attention whose Q/K are conditioned on the three Haar detail bands."""
 

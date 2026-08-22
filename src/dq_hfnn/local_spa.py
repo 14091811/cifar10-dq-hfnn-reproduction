@@ -7,6 +7,7 @@ import torch.nn.functional as F
 from .frequency_qpa import (
     ChannelWiseFrequencyQPA,
     DirectionalFrequencyQPAResidual,
+    VectorFrequencyPoMDownsample,
     FrequencyQPAResidual,
     haar_dwt2,
     haar_idwt2,
@@ -853,6 +854,22 @@ class TwoBlockDWTQPAFrequencyPoMQuantumCNN(TwoBlockDirectionalDWTQPACNN):
     def __init__(self, num_classes=2, hidden_dim=128):
         super().__init__(num_classes=num_classes, hidden_dim=hidden_dim, mode=None)
         self.classical.frequency_modulator = DWTQPAFrequencyPoMDownsample(mode="torchquantum")
+
+
+class TwoBlockVectorDWTQPAClassicalCNN(TwoBlockDirectionalDWTQPACNN):
+    """PoM-gated DWT module with a four-dimensional classical q/k scorer."""
+
+    def __init__(self, num_classes=2, hidden_dim=128):
+        super().__init__(num_classes=num_classes, hidden_dim=hidden_dim, mode=None)
+        self.classical.frequency_modulator = VectorFrequencyPoMDownsample(mode="classical")
+
+
+class TwoBlockVectorDWTQPAQuantumCNN(TwoBlockDirectionalDWTQPACNN):
+    """PoM-gated DWT module with a four-qubit vector q/k scorer."""
+
+    def __init__(self, num_classes=2, hidden_dim=128):
+        super().__init__(num_classes=num_classes, hidden_dim=hidden_dim, mode=None)
+        self.classical.frequency_modulator = VectorFrequencyPoMDownsample(mode="torchquantum")
 
 
 class TwoBlockRHDWTClassicalCNN(TwoBlockDirectionalDWTQPACNN):
