@@ -315,6 +315,26 @@ class StandardHighFrequencyGate(nn.Module):
         return self.features(high)
 
 
+class SeparateBandDepthwiseGate(nn.Module):
+    """Apply an independent depthwise filter to LH, HL, and HH before fusion."""
+
+    def __init__(self, channels):
+        super().__init__()
+        self.lh = nn.Conv2d(channels, channels, 3, padding=1, groups=channels, bias=False)
+        self.hl = nn.Conv2d(channels, channels, 3, padding=1, groups=channels, bias=False)
+        self.hh = nn.Conv2d(channels, channels, 3, padding=1, groups=channels, bias=False)
+        self.fuse = nn.Sequential(
+            nn.Conv2d(channels * 3, channels, 1, bias=False),
+            nn.GELU(),
+            nn.Conv2d(channels, channels, 1, bias=False),
+            nn.Sigmoid(),
+        )
+
+    def forward(self, lh, hl, hh):
+        high = torch.cat((self.lh(lh), self.hl(hl), self.hh(hh)), dim=1)
+        return self.fuse(high)
+
+
 class FrequencyQPAResidual(nn.Module):
     """DWT -> frequency-conditioned QPA -> IDWT residual for a 128x16x16 tap."""
 
@@ -358,7 +378,7 @@ class DirectionalFrequencyQPAResidual(nn.Module):
                  include_hh_in_gate=False, gate_value_before_attention=False,
                  star_value_gate=False, standard_value_gate=False,
                  circuit_variant="baseline", token_pool_factor=2,
-                 residual_output=True):
+                 residual_output=True, separate_band_depthwise_gate=False):
         super().__init__()
         if relation_dim <= 0 or relation_dim > reduced_channels:
             raise ValueError("relation_dim must be in [1, reduced_channels]")
@@ -389,11 +409,16 @@ class DirectionalFrequencyQPAResidual(nn.Module):
         self.circuit_variant = circuit_variant
         self.token_pool_factor = token_pool_factor
         self.residual_output = residual_output
+        self.separate_band_depthwise_gate = separate_band_depthwise_gate
         self.reduce = nn.Conv2d(channels, reduced_channels, 1, bias=False)
         high_gate_input_channels = reduced_channels * (3 if include_hh_in_gate else 2)
         if star_value_gate and standard_value_gate:
             raise ValueError("star_value_gate and standard_value_gate are mutually exclusive")
-        if star_value_gate:
+        if separate_band_depthwise_gate:
+            if not include_hh_in_gate:
+                raise ValueError("Separate band depthwise gate requires HH in the gate")
+            self.high_gate = SeparateBandDepthwiseGate(reduced_channels)
+        elif star_value_gate:
             if include_hh_in_gate:
                 raise ValueError("Star value gate screening currently uses LH/HL only")
             self.high_gate = StarHighFrequencyGate(reduced_channels)
@@ -462,7 +487,10 @@ class DirectionalFrequencyQPAResidual(nn.Module):
     def update_ll(self, ll, lh, hl, hh=None):
         batch, _, height, width = lh.shape
         high_inputs = (lh, hl, hh) if self.include_hh_in_gate and hh is not None else (lh, hl)
-        block_gate = self.high_gate(torch.cat(high_inputs, dim=1))
+        if self.separate_band_depthwise_gate:
+            block_gate = self.high_gate(lh, hl, hh)
+        else:
+            block_gate = self.high_gate(torch.cat(high_inputs, dim=1))
         q, k, v = self.qkv(ll).chunk(3, dim=1)
         if self.token_pool_factor == 2:
             block_gate = F.avg_pool2d(block_gate, 2)
