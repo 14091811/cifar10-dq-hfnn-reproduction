@@ -251,6 +251,65 @@ class FourQubitVectorQPAScorer(nn.Module):
         return torch.cat(scores).reshape(shape)
 
 
+class FourQubitFeatureMap(nn.Module):
+    """A small FC-VQC map that preserves a four-dimensional vector."""
+
+    def __init__(self, dimension=4, depth=2, pair_chunk=None):
+        super().__init__()
+        if dimension != 4:
+            raise ValueError("FourQubitFeatureMap requires dimension=4")
+        self.dimension = dimension
+        self.depth = depth
+        self.pair_chunk = pair_chunk
+        self.input_scale = nn.Parameter(torch.tensor(0.5))
+        self.angles = nn.Parameter(torch.empty(depth, dimension, 2))
+        nn.init.normal_(self.angles, mean=0.0, std=0.08)
+        try:
+            import torchquantum as tq
+        except ImportError as error:
+            raise ImportError("FourQubitFeatureMap requires torchquantum.") from error
+        self.tq = tq
+
+    def _chunk_size(self):
+        configured = self.pair_chunk or os.environ.get("TORCHQUANTUM_FEATURE_CHUNK", "32768")
+        chunk = int(configured)
+        if chunk <= 0:
+            raise ValueError("TORCHQUANTUM_FEATURE_CHUNK must be positive")
+        return chunk
+
+    def _run_chunk(self, values):
+        qdev = self.tq.QuantumDevice(
+            n_wires=4, bsz=values.shape[0], device=values.device, record_op=False,
+        )
+        qdev.reset_states(bsz=values.shape[0])
+        for layer in range(self.depth):
+            for wire in range(4):
+                angle = self.input_scale * values[:, wire] + self.angles[layer, wire, 0]
+                self.tq.functional.ry(qdev, wires=wire, params=angle)
+                self.tq.functional.rz(qdev, wires=wire, params=self.angles[layer, wire, 1])
+            for wire in range(4):
+                self.tq.functional.cnot(qdev, wires=[wire, (wire + 1) % 4])
+        probabilities = qdev.get_states_1d().abs().square()
+        basis = torch.arange(16, device=values.device)
+        output = probabilities.new_zeros(values.shape[0], 4)
+        for wire in range(4):
+            eigenvalue = 1.0 - 2.0 * ((basis >> wire) & 1).to(probabilities.dtype)
+            output[:, wire] = (probabilities * eigenvalue.unsqueeze(0)).sum(dim=1)
+        return output
+
+    def forward(self, values):
+        if values.shape[-1] != 4:
+            raise ValueError("FourQubitFeatureMap expects vectors of length four")
+        shape = values.shape
+        values = values.reshape(-1, 4)
+        chunk = self._chunk_size()
+        output = [
+            self._run_chunk(values[start:start + chunk])
+            for start in range(0, values.shape[0], chunk)
+        ]
+        return torch.cat(output).reshape(*shape)
+
+
 class VectorFrequencyPoMDownsample(nn.Module):
     """DWT downsample with PoM value gating and four-dimensional LL QPA."""
 

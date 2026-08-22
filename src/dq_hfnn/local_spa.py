@@ -1,5 +1,7 @@
 """Single local self-proliferation-and-attention blocks for CIFAR features."""
 
+import math
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -7,6 +9,7 @@ import torch.nn.functional as F
 from .frequency_qpa import (
     ChannelWiseFrequencyQPA,
     DirectionalFrequencyQPAResidual,
+    FourQubitFeatureMap,
     VectorFrequencyPoMDownsample,
     FrequencyQPAResidual,
     haar_dwt2,
@@ -470,6 +473,51 @@ class FrequencyPoMGate(nn.Module):
         return torch.sigmoid(self.gate_proj(gated))
 
 
+class FCVQAFrequencyPoMDownsample(nn.Module):
+    """PoM-gated DWT module with FC-VQC Q/K and classical attention."""
+
+    def __init__(self, mode="torchquantum"):
+        super().__init__()
+        if mode not in {"classical", "torchquantum"}:
+            raise ValueError(f"Unsupported FC-VQC mode: {mode}")
+        self.mode = mode
+        self.reduce = nn.Conv2d(128, 64, 1, bias=False)
+        self.high_gate = FrequencyPoMGate(channels=64, degree=2)
+        self.q_projection = nn.Conv2d(64, 4, 1, bias=False)
+        self.k_projection = nn.Conv2d(64, 4, 1, bias=False)
+        self.v_projection = nn.Conv2d(64, 64, 1, bias=False)
+        if mode == "torchquantum":
+            self.q_map = FourQubitFeatureMap(4, depth=2)
+            self.k_map = FourQubitFeatureMap(4, depth=2)
+        else:
+            self.q_map = nn.Sequential(nn.Linear(4, 4), nn.Tanh())
+            self.k_map = nn.Sequential(nn.Linear(4, 4), nn.Tanh())
+        self.output = nn.Sequential(
+            nn.Conv2d(64, 128, 1, bias=False),
+            nn.BatchNorm2d(128),
+            nn.ReLU(inplace=True),
+        )
+        self.residual_scale = nn.Parameter(torch.tensor(-2.0))
+
+    def forward(self, x):
+        reduced = self.reduce(x)
+        ll, lh, hl, hh = haar_dwt2(reduced)
+        value_gate = self.high_gate(ll, lh, hl, hh)
+        q = F.avg_pool2d(self.q_projection(ll), 2).flatten(2).transpose(1, 2)
+        k = F.avg_pool2d(self.k_projection(ll), 2).flatten(2).transpose(1, 2)
+        v = F.avg_pool2d(self.v_projection(ll) * value_gate, 2)
+        q = self.q_map(q)
+        k = self.k_map(k)
+        scores = torch.matmul(q, k.transpose(-1, -2)) / math.sqrt(4.0)
+        weights = scores.softmax(dim=-1)
+        values = v.flatten(2).transpose(1, 2)
+        context = torch.matmul(weights, values)
+        context = context.transpose(1, 2).reshape_as(v)
+        context = F.interpolate(context, size=ll.shape[-2:], mode="nearest")
+        updated_ll = ll + self.residual_scale.sigmoid() * context
+        return self.output(updated_ll)
+
+
 class DWTQPAFrequencyPoMDownsample(nn.Module):
     """DWT downsampling with LL-QPA and PoM-generated high-frequency V gates."""
 
@@ -527,7 +575,8 @@ class RHDWTDownsample(nn.Module):
 class RHDWTQPADownsample(nn.Module):
     """RHDWT-style spatial residual with LL-QPA and high-frequency V gating."""
 
-    def __init__(self, mode="torchquantum"):
+    def __init__(self, mode="torchquantum", relation_dim=16,
+                 partial_value=True, learned_partial_selection=True):
         super().__init__()
         self.reduce = nn.Conv2d(128, 64, 1, bias=False)
         self.high_gate = nn.Sequential(
@@ -539,11 +588,11 @@ class RHDWTQPADownsample(nn.Module):
         self.qpa = DirectionalFrequencyQPAResidual(
             channels=64,
             reduced_channels=64,
-            relation_dim=16,
+            relation_dim=relation_dim,
             mode=mode,
             entangled=mode == "torchquantum",
-            partial_value=True,
-            learned_partial_selection=True,
+            partial_value=partial_value,
+            learned_partial_selection=learned_partial_selection,
             gate_value_before_attention=True,
             residual_output=False,
         )
@@ -872,6 +921,22 @@ class TwoBlockVectorDWTQPAQuantumCNN(TwoBlockDirectionalDWTQPACNN):
         self.classical.frequency_modulator = VectorFrequencyPoMDownsample(mode="torchquantum")
 
 
+class TwoBlockFCVQADWTQPAClassicalCNN(TwoBlockDirectionalDWTQPACNN):
+    """FC-VQC-style classical Q/K projection with standard attention."""
+
+    def __init__(self, num_classes=2, hidden_dim=128):
+        super().__init__(num_classes=num_classes, hidden_dim=hidden_dim, mode=None)
+        self.classical.frequency_modulator = FCVQAFrequencyPoMDownsample(mode="classical")
+
+
+class TwoBlockFCVQADWTQPAQuantumCNN(TwoBlockDirectionalDWTQPACNN):
+    """FC-VQC Q/K projection with standard scaled dot-product attention."""
+
+    def __init__(self, num_classes=2, hidden_dim=128):
+        super().__init__(num_classes=num_classes, hidden_dim=hidden_dim, mode=None)
+        self.classical.frequency_modulator = FCVQAFrequencyPoMDownsample(mode="torchquantum")
+
+
 class TwoBlockRHDWTClassicalCNN(TwoBlockDirectionalDWTQPACNN):
     def __init__(self, num_classes=2, hidden_dim=128):
         super().__init__(num_classes=num_classes, hidden_dim=hidden_dim, mode=None)
@@ -888,6 +953,28 @@ class TwoBlockRHDWTQPAQuantumCNN(TwoBlockDirectionalDWTQPACNN):
     def __init__(self, num_classes=2, hidden_dim=128):
         super().__init__(num_classes=num_classes, hidden_dim=hidden_dim, mode=None)
         self.classical.frequency_modulator = RHDWTQPADownsample(mode="torchquantum")
+
+
+class TwoBlockRHDWTQPAClassicalD64CNN(TwoBlockDirectionalDWTQPACNN):
+    """RHDWT with all 64 relation/value channels and no bypass."""
+
+    def __init__(self, num_classes=2, hidden_dim=128):
+        super().__init__(num_classes=num_classes, hidden_dim=hidden_dim, mode=None)
+        self.classical.frequency_modulator = RHDWTQPADownsample(
+            mode="classical", relation_dim=64,
+            partial_value=False, learned_partial_selection=False,
+        )
+
+
+class TwoBlockRHDWTQPAQuantumD64CNN(TwoBlockDirectionalDWTQPACNN):
+    """RHDWT with a full 64-dimensional quantum relation path."""
+
+    def __init__(self, num_classes=2, hidden_dim=128):
+        super().__init__(num_classes=num_classes, hidden_dim=hidden_dim, mode=None)
+        self.classical.frequency_modulator = RHDWTQPADownsample(
+            mode="torchquantum", relation_dim=64,
+            partial_value=False, learned_partial_selection=False,
+        )
 
 
 class TwoBlockDirectionalDWTClassicalD8CNN(TwoBlockDirectionalDWTQPACNN):
