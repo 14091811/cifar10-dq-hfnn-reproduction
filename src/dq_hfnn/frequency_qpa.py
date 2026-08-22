@@ -233,6 +233,49 @@ class DirectionalHighBandRefinement(nn.Module):
         return lh + self.scale * lh_c, hl + self.scale * hl_c, hh + self.scale * hh_c
 
 
+class ChannelWiseFrequencyQPA(nn.Module):
+    """Channel-token QPA: Q/K are channel descriptors and V keeps HxW maps."""
+
+    def __init__(self, channels=64, heads=4, mode="torchquantum", entangled=True):
+        super().__init__()
+        if channels % heads:
+            raise ValueError("channels must divide evenly across channel-QPA heads")
+        if mode not in {"classical", "torchquantum"}:
+            raise ValueError(f"Unsupported channel-QPA mode: {mode}")
+        self.channels = channels
+        self.heads = heads
+        self.head_channels = channels // heads
+        self.qkv = nn.Conv2d(channels, channels * 3, 1, bias=False)
+        self.high_gate = nn.Sequential(
+            nn.Conv2d(channels * 2, channels * 2, 3, padding=1,
+                      groups=channels * 2, bias=False),
+            nn.GELU(),
+            nn.Conv2d(channels * 2, channels, 1, bias=False),
+            nn.Sigmoid(),
+        )
+        self.output_projection = nn.Conv2d(channels, channels, 1, bias=False)
+        self.scorer = (
+            ClassicalQPAScorer() if mode == "classical"
+            else TorchQuantumQPAScorer(entangled=entangled)
+        )
+
+    def forward(self, ll, lh, hl):
+        batch, _, height, width = ll.shape
+        q, k, v = self.qkv(ll).chunk(3, dim=1)
+        v = v * self.high_gate(torch.cat((lh, hl), dim=1))
+
+        # Each channel is a token. Q/K use global descriptors, while V keeps
+        # the full spatial response map for channel-to-channel aggregation.
+        q = q.mean(dim=(-2, -1)).reshape(batch, self.heads, self.head_channels)
+        k = k.mean(dim=(-2, -1)).reshape(batch, self.heads, self.head_channels)
+        v = v.reshape(batch, self.heads, self.head_channels, height * width)
+        scores = self.scorer(q.unsqueeze(-1), k.unsqueeze(-2))
+        weights = scores.softmax(dim=-1)
+        context = weights @ v
+        context = context.reshape(batch, self.channels, height, width)
+        return context + self.output_projection(context)
+
+
 class StarHighFrequencyGate(nn.Module):
     """Star-style LH/HL gate with multiplicative feature interaction."""
 

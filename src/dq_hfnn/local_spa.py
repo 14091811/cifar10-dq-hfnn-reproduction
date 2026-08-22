@@ -4,7 +4,13 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from .frequency_qpa import DirectionalFrequencyQPAResidual, FrequencyQPAResidual
+from .frequency_qpa import (
+    ChannelWiseFrequencyQPA,
+    DirectionalFrequencyQPAResidual,
+    FrequencyQPAResidual,
+    haar_dwt2,
+    haar_idwt2,
+)
 from .model import Block, ClassicalBranch
 
 
@@ -282,6 +288,28 @@ class PartialChannelDWTQPA(nn.Module):
         return self.fuse(torch.cat((active, bypass), dim=1))
 
 
+class ChannelWiseDWTQPA(nn.Module):
+    """Non-residual DWT layer whose QPA tokens are feature channels."""
+
+    def __init__(self, mode="torchquantum"):
+        super().__init__()
+        self.reduce = nn.Conv2d(128, 64, 1, bias=False)
+        self.attention = ChannelWiseFrequencyQPA(
+            channels=64, heads=4, mode=mode, entangled=mode == "torchquantum"
+        )
+        self.expand = nn.Conv2d(64, 128, 1, bias=False)
+        self.fuse = nn.Sequential(
+            nn.BatchNorm2d(128),
+            nn.ReLU(inplace=True),
+        )
+
+    def forward(self, x):
+        reduced = self.reduce(x)
+        ll, lh, hl, hh = haar_dwt2(reduced)
+        ll = self.attention(ll, lh, hl)
+        return self.fuse(self.expand(haar_idwt2(ll, lh, hl, hh)))
+
+
 class TwoBlockDirectionalDWTQPACNN(nn.Module):
     """Paired two-block controls for the CIFAR binary small-sample study."""
 
@@ -338,6 +366,18 @@ class TwoBlockPartialChannelDWTQuantumCNN(TwoBlockDirectionalDWTQPACNN):
     def __init__(self, num_classes=2, hidden_dim=128):
         super().__init__(num_classes=num_classes, hidden_dim=hidden_dim, mode=None)
         self.classical.frequency_modulator = PartialChannelDWTQPA(mode="torchquantum")
+
+
+class TwoBlockChannelWiseDWTClassicalCNN(TwoBlockDirectionalDWTQPACNN):
+    def __init__(self, num_classes=2, hidden_dim=128):
+        super().__init__(num_classes=num_classes, hidden_dim=hidden_dim, mode=None)
+        self.classical.frequency_modulator = ChannelWiseDWTQPA(mode="classical")
+
+
+class TwoBlockChannelWiseDWTQuantumCNN(TwoBlockDirectionalDWTQPACNN):
+    def __init__(self, num_classes=2, hidden_dim=128):
+        super().__init__(num_classes=num_classes, hidden_dim=hidden_dim, mode=None)
+        self.classical.frequency_modulator = ChannelWiseDWTQPA(mode="torchquantum")
 
 
 class TwoBlockDirectionalDWTClassicalD8CNN(TwoBlockDirectionalDWTQPACNN):
