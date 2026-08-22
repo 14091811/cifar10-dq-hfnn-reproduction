@@ -34,16 +34,21 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--datasets", default=",".join(DATASETS))
     parser.add_argument("--seeds", default=",".join(map(str, SEEDS)))
+    parser.add_argument("--models", default=",".join(MODELS))
     args = parser.parse_args()
     datasets = parse_csv(args.datasets)
     seeds = tuple(int(value) for value in parse_csv(args.seeds))
+    models = parse_csv(args.models)
+    invalid_models = [model for model in models if model not in MODELS]
+    if invalid_models:
+        raise ValueError(f"unsupported model(s): {', '.join(invalid_models)}")
     for dataset in datasets:
         if dataset not in DATASETS:
             raise ValueError(f"unsupported dataset: {dataset}")
         base_config = json.loads(DATASETS[dataset].read_text(encoding="utf-8"))
         output_dir = ROOT / "configs" / f"generated_{dataset}_circuit_ablation"
         output_dir.mkdir(parents=True, exist_ok=True)
-        for model_type in MODELS:
+        for model_type in models:
             log_path = ROOT / "study_logs" / "circuit_ablation" / f"{dataset}__{model_type}.log"
             log_path.parent.mkdir(parents=True, exist_ok=True)
             print(f"START {dataset} {model_type} log={log_path}", flush=True)
