@@ -530,9 +530,9 @@ class RHDWTQPADownsample(nn.Module):
         super().__init__()
         self.reduce = nn.Conv2d(128, 64, 1, bias=False)
         self.high_gate = nn.Sequential(
-            nn.Conv2d(128, 128, 3, padding=1, groups=128, bias=False),
+            nn.Conv2d(192, 192, 3, padding=1, groups=192, bias=False),
             nn.GELU(),
-            nn.Conv2d(128, 64, 1, bias=False),
+            nn.Conv2d(192, 64, 1, bias=False),
             nn.Sigmoid(),
         )
         self.qpa = DirectionalFrequencyQPAResidual(
