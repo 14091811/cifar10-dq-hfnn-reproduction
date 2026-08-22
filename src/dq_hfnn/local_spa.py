@@ -254,6 +254,34 @@ class TwoBlockBinaryBranch(nn.Module):
         return self.pool(x).flatten(1)
 
 
+class PartialChannelDWTQPA(nn.Module):
+    """Non-residual partial-channel DWT-QPA layer between two ResBlocks."""
+
+    def __init__(self, mode="torchquantum"):
+        super().__init__()
+        self.reduce = nn.Conv2d(128, 64, 1, bias=False)
+        self.active_qpa = DirectionalFrequencyQPAResidual(
+            channels=16,
+            reduced_channels=16,
+            relation_dim=16,
+            mode=mode,
+            entangled=mode == "torchquantum",
+            gate_value_before_attention=True,
+            residual_output=False,
+        )
+        self.fuse = nn.Sequential(
+            nn.Conv2d(64, 128, 1, bias=False),
+            nn.BatchNorm2d(128),
+            nn.ReLU(inplace=True),
+        )
+
+    def forward(self, x):
+        reduced = self.reduce(x)
+        active, bypass = reduced[:, :16], reduced[:, 16:]
+        active = self.active_qpa(active)
+        return self.fuse(torch.cat((active, bypass), dim=1))
+
+
 class TwoBlockDirectionalDWTQPACNN(nn.Module):
     """Paired two-block controls for the CIFAR binary small-sample study."""
 
@@ -298,6 +326,18 @@ class TwoBlockDirectionalDWTQPACNN(nn.Module):
 class TwoBlockClassicalCNN(TwoBlockDirectionalDWTQPACNN):
     def __init__(self, num_classes=2, hidden_dim=128):
         super().__init__(num_classes=num_classes, hidden_dim=hidden_dim, mode=None)
+
+
+class TwoBlockPartialChannelDWTClassicalCNN(TwoBlockDirectionalDWTQPACNN):
+    def __init__(self, num_classes=2, hidden_dim=128):
+        super().__init__(num_classes=num_classes, hidden_dim=hidden_dim, mode=None)
+        self.classical.frequency_modulator = PartialChannelDWTQPA(mode="classical")
+
+
+class TwoBlockPartialChannelDWTQuantumCNN(TwoBlockDirectionalDWTQPACNN):
+    def __init__(self, num_classes=2, hidden_dim=128):
+        super().__init__(num_classes=num_classes, hidden_dim=hidden_dim, mode=None)
+        self.classical.frequency_modulator = PartialChannelDWTQPA(mode="torchquantum")
 
 
 class TwoBlockDirectionalDWTClassicalD8CNN(TwoBlockDirectionalDWTQPACNN):

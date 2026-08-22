@@ -314,7 +314,8 @@ class DirectionalFrequencyQPAResidual(nn.Module):
                  group_size=4, learned_partial_selection=False,
                  include_hh_in_gate=False, gate_value_before_attention=False,
                  star_value_gate=False, standard_value_gate=False,
-                 circuit_variant="baseline", token_pool_factor=2):
+                 circuit_variant="baseline", token_pool_factor=2,
+                 residual_output=True):
         super().__init__()
         if relation_dim <= 0 or relation_dim > reduced_channels:
             raise ValueError("relation_dim must be in [1, reduced_channels]")
@@ -344,6 +345,7 @@ class DirectionalFrequencyQPAResidual(nn.Module):
         self.mode = mode
         self.circuit_variant = circuit_variant
         self.token_pool_factor = token_pool_factor
+        self.residual_output = residual_output
         self.reduce = nn.Conv2d(channels, reduced_channels, 1, bias=False)
         high_gate_input_channels = reduced_channels * (3 if include_hh_in_gate else 2)
         if star_value_gate and standard_value_gate:
@@ -479,7 +481,10 @@ class DirectionalFrequencyQPAResidual(nn.Module):
             block_gate = F.interpolate(block_gate, size=(height, width), mode="nearest")
             updated_ll = ll + block_gate * delta
         reconstruction = haar_idwt2(updated_ll, lh, hl, hh)
-        return x + self.alpha * self.expand(reconstruction)
+        transformed = self.expand(reconstruction)
+        if not self.residual_output:
+            return transformed
+        return x + self.alpha * transformed
 
 
 class WideTwoLevelFrequencyQPAAttention(nn.Module):
