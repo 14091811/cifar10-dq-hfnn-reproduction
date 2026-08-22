@@ -273,7 +273,7 @@ class ChannelWiseFrequencyQPA(nn.Module):
         weights = scores.softmax(dim=-1)
         context = weights @ v
         context = context.reshape(batch, self.channels, height, width)
-        return context + self.output_projection(context)
+        return self.output_projection(context)
 
 
 class StarHighFrequencyGate(nn.Module):
